@@ -12,6 +12,9 @@ public class NetworkAnchor : MonoBehaviour
     [Tooltip("The game object to enable when the initial network anchor has been loaded.")]
     public GameObject FoundAnchorRoot;
 
+    [Tooltip("The game object to move while the imported anchor moves, before a new anchor arrives.")]
+    public GameObject ImportedAnchorOffset;
+
     /// <summary>
     /// For this to function, the game object must also have the AnchorPersistence behavior applied.
     /// </summary>
@@ -27,7 +30,16 @@ public class NetworkAnchor : MonoBehaviour
     /// </summary>
     private NetworkAnchorPlayer anchorPlayer;
 
+    /// <summary>
+    /// The last presistence event that occurred without having loaded an anchor player yet. Once an anchor player is
+    /// found, process this event.
+    /// </summary>
     private PersistenceEventArgs pendingPersistenceEventArgs = null;
+
+    /// <summary>
+    /// The last position of the game object
+    /// </summary>
+    private Vector3 lastProcessedPosition;
 
     private void Awake()
     {
@@ -48,6 +60,7 @@ public class NetworkAnchor : MonoBehaviour
     /// </summary>
     private void Start()
     {
+        lastProcessedPosition = gameObject.transform.position;
         anchorPersistence = gameObject.GetComponent<AnchorPersistence>();
         if (anchorPersistence != null)
         {
@@ -67,6 +80,7 @@ public class NetworkAnchor : MonoBehaviour
         WhenReadyInitializeAnchorManagerOnce();
         WhenReadyInitializeAnchorPlayerOnce();
         UpdateActiveGameObjects();
+        UpdateAnchorPositions();
     }
 
     /// <summary>
@@ -88,7 +102,7 @@ public class NetworkAnchor : MonoBehaviour
             return;
         }
 
-        networkAnchorManager.LastReceivedAnchorChanged += OnReceivedRemoteAnchor;
+        networkAnchorManager.ImportedAnchorChanged += OnReceivedRemoteAnchor;
     }
 
     /// <summary>
@@ -113,7 +127,7 @@ public class NetworkAnchor : MonoBehaviour
         // If an anchor blob was received from another player, now's the time to handle this.
         if (networkAnchorManager != null)
         {
-            OnReceivedRemoteAnchor(networkAnchorManager, networkAnchorManager.LastReceivedAnchor);
+            OnReceivedRemoteAnchor(networkAnchorManager, networkAnchorManager.ImportedAnchor);
         }
         else
         {
@@ -134,7 +148,7 @@ public class NetworkAnchor : MonoBehaviour
             return;
         }
 
-        if (LoadingAnchorRoot != null && networkAnchorManager.LoadingAnchor)
+        if (LoadingAnchorRoot != null && networkAnchorManager.ImportingAnchor)
         {
             if (FoundAnchorRoot != null)
             {
@@ -161,9 +175,33 @@ public class NetworkAnchor : MonoBehaviour
     }
 
     /// <summary>
+    /// Notify the anchor player that this anchor as moved
+    /// </summary>
+    private void UpdateAnchorPositions()
+    {
+        // If this is consumes the shared anchor. Update the container offset, before new anchor arrives.
+        if (ImportedAnchorOffset != null && networkAnchorManager != null)
+        {
+            ImportedAnchorOffset.transform.localPosition = networkAnchorManager.ImportedAnchorOffset;
+        }
+
+        // If this is owns the shared anchor. Notify others of position changes
+        if (!(lastProcessedPosition == gameObject.transform.position))
+        {
+            var moveDelta = gameObject.transform.position - lastProcessedPosition;
+            lastProcessedPosition = gameObject.transform.position;
+
+            if (anchorPlayer != null)
+            {
+                anchorPlayer.MovedAnchor(moveDelta);
+            }
+        }
+    }
+
+    /// <summary>
     /// When receiving a remote anchor, apply it to this game object.
     /// </summary>
-    private void OnReceivedRemoteAnchor(NetworkAnchorManager sender, LastReceivedAnchorArgs args)
+    private void OnReceivedRemoteAnchor(NetworkAnchorManager sender, ImportedAnchorChangedArgs args)
     {
         if (args != null && anchorPersistence != null)
         {

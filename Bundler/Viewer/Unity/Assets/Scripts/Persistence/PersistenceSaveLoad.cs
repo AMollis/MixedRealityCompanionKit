@@ -172,8 +172,11 @@ namespace Persistence
             // delete any previous WorldAnchors on this object
             DeleteLocation(gameObject, store);
 
-            // add a new anchor to gameObject
-            gameObject.AddComponent<WorldAnchor>();
+            // add a new anchor to gameObject, if needed
+            if (gameObject.GetComponent<WorldAnchor>() == null)
+            {
+                gameObject.AddComponent<WorldAnchor>();
+            }
 
             // now save the new anchor
             return SaveExistingLocation(Guid.NewGuid(), gameObject, store);

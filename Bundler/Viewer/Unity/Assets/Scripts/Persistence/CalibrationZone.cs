@@ -15,23 +15,34 @@ namespace Persistence
         [Tooltip("Root transform to align. Leave null to use current transform.")]
         public Transform TargetTransform = null;
 
+        [Tooltip("Root transform to align as a preview. Once previewing is complete, position will be migrated to the target transform. Leave null to use the target transform.")]
+        public Transform PreviewTransform = null;
+
         [HideInInspector]
         public bool IsCalibrated { get { return persistence.IsAnchored; } }
         [HideInInspector]
         public bool IsCalibrating = false;
 
-        private Vector3 origPosition;
-        private Quaternion origRotation;
-        private Vector3 origScale;
+        private struct OriginalTransform
+        {
+            public Vector3 position;
+            public Quaternion rotation;
+            public Vector3 scale;
+        }
 
+        private OriginalTransform originalTarget;
         private AnchorPersistence persistence;
         
         void Awake()
         {
             TargetTransform = TargetTransform == null ? gameObject.transform : TargetTransform;
-            origPosition = TargetTransform.localPosition;
-            origRotation = TargetTransform.localRotation;
-            origScale = TargetTransform.localScale;
+            PreviewTransform = PreviewTransform == null ? TargetTransform : PreviewTransform;
+
+            originalTarget.position = TargetTransform.localPosition;
+            originalTarget.rotation = TargetTransform.localRotation;
+            originalTarget.scale = TargetTransform.localScale;
+
+            ResetPreviewTransform();
         }
 
         void Start()
@@ -79,6 +90,10 @@ namespace Persistence
             {
                 PlaceAnchor(saveAnchor);
             }
+            else
+            {
+                CommitPreviewTransform();
+            }
 
             IsCalibrating = false;
 
@@ -90,9 +105,21 @@ namespace Persistence
 
         public void PlaceAnchor(bool saveAnchor)
         {
+            CommitPreviewTransform();
             persistence.PlaceAnchor(saveAnchor);
         }
-        
+
+        private void CommitPreviewTransform()
+        {
+            if (PreviewTransform != TargetTransform)
+            {
+                TargetTransform.position = PreviewTransform.position;
+                TargetTransform.rotation = PreviewTransform.rotation;
+                TargetTransform.localScale = PreviewTransform.localScale;
+                ResetPreviewTransform();
+            }
+        }
+
         public bool ClearAnchor(bool removeSavedLocation)
         {
             var ret =  persistence.ClearAnchor(removeSavedLocation);
@@ -103,9 +130,20 @@ namespace Persistence
         public void ResetTransform(bool removeSavedLocation = false)
         {
             ClearAnchor(removeSavedLocation);
-            TargetTransform.localPosition = origPosition;
-            TargetTransform.localRotation = origRotation;
-            TargetTransform.localScale = origScale;
+            TargetTransform.position = originalTarget.position;
+            TargetTransform.rotation = originalTarget.rotation;
+            TargetTransform.localScale = originalTarget.scale;
+            ResetPreviewTransform();
+        }
+
+        private void ResetPreviewTransform()
+        {
+            if (TargetTransform != PreviewTransform)
+            {
+                PreviewTransform.localPosition = Vector3.zero;
+                PreviewTransform.localRotation = Quaternion.identity;
+                PreviewTransform.localScale = Vector3.one;
+            }
         }
     }
 }

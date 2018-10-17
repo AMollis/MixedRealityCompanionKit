@@ -159,7 +159,7 @@ public class GenericNetworkTransmitter
     /// </summary>
     public async void StartAsServer(byte[] data)
     {
-        Debug.Log("[GenericNetworkTransmitter] Starting as server.");
+        Debug.Log("[GenericNetworkTransmitter] Creating server.");
 
         StopClient();
 
@@ -177,21 +177,23 @@ public class GenericNetworkTransmitter
             {
                 newNetworkListener = new StreamSocketListener();
                 newNetworkListener.ConnectionReceived += ConnectionReceived;
-                await newNetworkListener.BindServiceNameAsync(sendConnectionPort.ToString());
+                await newNetworkListener.BindServiceNameAsync(sendConnectionPort.ToString(), SocketProtectionLevel.PlainSocket);
             }
         }
         catch
         {
-            Debug.LogError("[GenericNetworkTransmitter] Failed to start as server.");
+            newNetworkListener = null;
+            Debug.LogError("[GenericNetworkTransmitter] Failed to create server.");
         }
 
         lock (stateLock)
         {
-            if (networkListener == null && state == TransmitterState.Server)
+            if (networkListener == null && newNetworkListener != null && state == TransmitterState.Server)
             {
+                Debug.Log("[GenericNetworkTransmitter] Started server.");
                 networkListener = newNetworkListener;
             }
-            else
+            else if (newNetworkListener != null)
             {
                 newNetworkListener.ConnectionReceived -= ConnectionReceived;
                 newNetworkListener.Dispose();
@@ -256,7 +258,7 @@ public class GenericNetworkTransmitter
             HostName networkHost = new HostName(serverIp);
             using (StreamSocket networkConnection = new StreamSocket())
             {
-                await networkConnection.ConnectAsync(networkHost, sendConnectionPort.ToString());
+                await networkConnection.ConnectAsync(networkHost, sendConnectionPort.ToString(), SocketProtectionLevel.PlainSocket);
                 result = await ReadInputStream(networkConnection);
             }
         }

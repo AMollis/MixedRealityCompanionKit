@@ -74,10 +74,21 @@ public class NetworkAnchorPlayer : NetworkBehaviour
             return;
         }
 
-        if (NetworkAnchorManager.Instance.TrySharingAnchor(anchorId, gameObject))
+        NetworkAnchorManager.Instance.TrySharingAnchorAsync(anchorId, gameObject, SharingAnchorCompleted);
+    }
+
+    /// <summary>
+    /// Invoked after the anchor data has been exported, and can now to shared to other players.
+    /// </summary>
+    /// <param name="sharedAnchorId">The id of the shared anchor</param>
+    /// <param name="sharedGameObject">The game object that owns the anchor</param>
+    /// <param name="result">The share result</param>
+    private void SharingAnchorCompleted(String sharedAnchorId, GameObject sharedGameObject, NetworkAnchorManager.SharingAnchorResult result)
+    {
+        // Start taking ownership of the anchor
+        if (result == NetworkAnchorManager.SharingAnchorResult.Success)
         {
-            // Start taking ownership of the anchor
-            CmdShareAnchor(SharedAnchorData.Create(anchorId));
+            CmdShareAnchor(SharedAnchorData.Create(sharedAnchorId));
         }
     }
 
@@ -97,4 +108,37 @@ public class NetworkAnchorPlayer : NetworkBehaviour
             Debug.LogErrorFormat("[NetworkAnchorPlayer] Can't set anchor source, network anchor server is missing. {0} {1}", anchorSource.ToString(), DebugInfo());
         }
     }
+
+    public void MovedAnchor(Vector3 moveDelta)
+    {
+        if (NetworkAnchorManager.Instance == null)
+        {
+            Debug.LogFormat("[NetworkAnchorPlayer] Ignoring move request, as there is no anchor server. {0}", DebugInfo());
+            return;
+        }
+
+        if (moveDelta == Vector3.zero)
+        {
+            Debug.LogFormat("[NetworkAnchorPlayer] Ignoring move request, as move delta was zero. {0}", DebugInfo());
+            return;
+        }
+
+        if (NetworkAnchorManager.Instance.IsAnchorSourceOwner)
+        {
+            RpcMovedAnchor(moveDelta);
+        }
+    }
+
+    [ClientRpc]
+    private void RpcMovedAnchor(Vector3 moveDelta)
+    {
+        if (NetworkAnchorManager.Instance == null)
+        {
+            Debug.LogFormat("[NetworkAnchorPlayer] Ignoring rpc move request, as there is no anchor server. {1}", DebugInfo());
+            return;
+        }
+
+        NetworkAnchorManager.Instance.ImportedAnchorMoved(moveDelta);
+    }
+
 }

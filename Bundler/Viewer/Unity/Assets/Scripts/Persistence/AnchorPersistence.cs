@@ -121,16 +121,13 @@ namespace Persistence
         {
             TargetGameObject = TargetGameObject == null ? gameObject : TargetGameObject;
 #if UNITY_WSA
+            ClearAnchor(false);
+            TargetGameObject.AddComponent<WorldAnchor>();
+            _isAnchored = true;
+
             if (saveAchor)
             {
-                _isAnchored = saveLoad.SaveLocation(TargetGameObject, worldAnchorStore);
-
-            }
-            else
-            {
-                ClearAnchor(false);
-                TargetGameObject.AddComponent<WorldAnchor>();
-                _isAnchored = true;
+                saveLoad.SaveLocation(TargetGameObject, worldAnchorStore);
             }
 #endif
             return _isAnchored;
