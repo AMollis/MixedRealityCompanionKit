@@ -302,7 +302,7 @@ public class NetworkAnchorManager : NetworkBehaviour
     /// Check out the anchor source
     /// </summary>
     [Server]
-    public bool CheckoutAnchorSource(NetworkAnchorPlayer player)
+    public bool CheckOutAnchorSource(NetworkAnchorPlayer player)
     {
         if (player == null)
         {
@@ -357,7 +357,7 @@ public class NetworkAnchorManager : NetworkBehaviour
     /// Check in anchor source
     /// </summary>
     [Server]
-    public bool CheckinAnchorSource(NetworkAnchorPlayer player, SharedAnchorData anchorData)
+    public bool CheckInAnchorSource(NetworkAnchorPlayer player, SharedAnchorData anchorData)
     {
         bool checkedIn = false;
         lock (AnchorCheckoutLock)

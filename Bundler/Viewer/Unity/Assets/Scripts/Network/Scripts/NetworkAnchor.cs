@@ -177,7 +177,7 @@ public class NetworkAnchor : MonoBehaviour
             checkoutPosition = Vector3.zero;
 
             Debug.LogFormat("[NetworkAnchor] Checking in new anchor. (anchorId = {0})", anchorId);
-            anchorPlayer.CheckinAnchor(anchorId, target);
+            anchorPlayer.CheckInAnchor(anchorId, target);
         }
         else
         {

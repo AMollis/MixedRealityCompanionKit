@@ -9,11 +9,6 @@ using System.Collections;
 public class NetworkAnchorPlayer : NetworkBehaviour
 {
     /// <summary>
-    /// The local anchor player.
-    /// </summary>
-    private static NetworkAnchorPlayer localInstance;
-
-    /// <summary>
     /// The current check-out request for the shared anchor
     /// </summary>
     CheckoutRequest currentRequest = new CheckoutRequest(0);
@@ -26,13 +21,7 @@ public class NetworkAnchorPlayer : NetworkBehaviour
     /// <summary>
     ///  The local anchor player. 
     /// </summary>
-    public static NetworkAnchorPlayer LocalInstance
-    {
-        get
-        {
-            return localInstance;
-        }
-    }
+    public static NetworkAnchorPlayer LocalInstance { get; private set; }
 
     /// <summary>
     /// Get if this player currently has the anchor checked out.
@@ -76,7 +65,21 @@ public class NetworkAnchorPlayer : NetworkBehaviour
 
         if (hasAuthority)
         {
-            localInstance = this;
+            LocalInstance = this;
+        }
+    }
+
+    /// <summary>
+    /// Handle network object being destroyed
+    /// </summary>
+    public override void OnNetworkDestroy()
+    {
+        base.OnNetworkDestroy();
+
+        // Check-in anchor, just in case this was the anchor owner
+        if (this.isServer)
+        {
+            CheckInAnchor(SharedAnchorData.Empty);
         }
     }
 
@@ -91,7 +94,7 @@ public class NetworkAnchorPlayer : NetworkBehaviour
             yield return CheckoutAnchorAsync();
             if (CheckedOutAnchor && !NetworkAnchorManager.Instance.IsSharedAnchorOwned)
             {
-                CheckinAnchor(anchorId, gameObject);
+                CheckInAnchor(anchorId, gameObject);
             }
         }
     }
@@ -151,7 +154,7 @@ public class NetworkAnchorPlayer : NetworkBehaviour
     /// Export the anchor data stored in game object, take anchor ownership of the shared anchor, and broadcast anchor
     /// data to other players.
     /// </summary>
-    public void CheckinAnchor(String anchorId, GameObject gameObject)
+    public void CheckInAnchor(String anchorId, GameObject gameObject)
     {
         if (NetworkAnchorManager.Instance == null)
         {
@@ -174,14 +177,21 @@ public class NetworkAnchorPlayer : NetworkBehaviour
         if (result == NetworkAnchorManager.ExportingAnchorResult.Success)
         {
             Debug.LogFormat("[NetworkAnchorPlayer] Succeeded to export. Sending anchor check-in request. {0}", DebugInfo());
-            CmdCheckinAnchor(SharedAnchorData.Create(sharedAnchorId));
+            CheckInAnchor(SharedAnchorData.Create(sharedAnchorId));
         }
         else
         {
             Debug.LogFormat("[NetworkAnchorPlayer] Failed to export. Sending anchor check-in request. {0}", DebugInfo());
-            CmdCheckinAnchor(SharedAnchorData.Empty);
+            CheckInAnchor(SharedAnchorData.Empty);
         }
+    }
 
+    /// <summary>
+    /// Check-in a new shared anchor.
+    /// </summary>
+    private void CheckInAnchor(SharedAnchorData anchorData)
+    {
+        CmdCheckInAnchor(anchorData);
         CheckedOutAnchor = false;
     }
 
@@ -194,7 +204,7 @@ public class NetworkAnchorPlayer : NetworkBehaviour
             return;
         }
 
-        bool checkedOut = NetworkAnchorManager.Instance.CheckoutAnchorSource(this);
+        bool checkedOut = NetworkAnchorManager.Instance.CheckOutAnchorSource(this);
         RpcCheckOutAnchorResult(requestId, checkedOut);
     }
 
@@ -227,7 +237,7 @@ public class NetworkAnchorPlayer : NetworkBehaviour
     }
 
     [Command]
-    private void CmdCheckinAnchor(SharedAnchorData newAnchorData)
+    private void CmdCheckInAnchor(SharedAnchorData newAnchorData)
     {
         if (NetworkAnchorManager.Instance == null)
         {
@@ -235,7 +245,7 @@ public class NetworkAnchorPlayer : NetworkBehaviour
             return;
         }
 
-        NetworkAnchorManager.Instance.CheckinAnchorSource(this, newAnchorData);
+        NetworkAnchorManager.Instance.CheckInAnchorSource(this, newAnchorData);
     }
 
     /// <summary>
