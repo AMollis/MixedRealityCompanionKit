@@ -3,6 +3,8 @@
 
 using UnityEngine;
 using Persistence;
+using System.Collections;
+using UnityEngine.XR.WSA.Sharing;
 
 public class NetworkAnchor : MonoBehaviour
 {
@@ -16,9 +18,22 @@ public class NetworkAnchor : MonoBehaviour
     public GameObject ImportedAnchorOffset;
 
     /// <summary>
-    /// For this to function, the game object must also have the AnchorPersistence behavior applied.
+    /// Get if this currently has the anchor checked out.
     /// </summary>
-    private AnchorPersistence anchorPersistence;
+    public bool CheckedOutAnchor
+    {
+        get
+        {
+            return anchorPlayer != null && anchorPlayer.CheckedOutAnchor;
+        }
+    }
+
+    public delegate void OnReceivedRemoteAnchorTransferBatch(NetworkAnchor sender, WorldAnchorTransferBatch batch);
+
+    /// <summary>
+    /// Event raised when a new remote transf batch has arrived.
+    /// </summary>
+    public event OnReceivedRemoteAnchorTransferBatch ReceivedRemoteAnchorTransferBatch;
 
     /// <summary>
     /// For this to function, there must be a global NetworkAnchorManager.
@@ -31,15 +46,9 @@ public class NetworkAnchor : MonoBehaviour
     private NetworkAnchorPlayer anchorPlayer;
 
     /// <summary>
-    /// The last presistence event that occurred without having loaded an anchor player yet. Once an anchor player is
-    /// found, process this event.
-    /// </summary>
-    private PersistenceEventArgs pendingPersistenceEventArgs = null;
-
-    /// <summary>
     /// The last position of the game object
     /// </summary>
-    private Vector3 lastProcessedPosition;
+    private Vector3 checkoutPosition;
 
     private void Awake()
     {
@@ -51,24 +60,6 @@ public class NetworkAnchor : MonoBehaviour
         if (LoadingAnchorRoot != null)
         {
             LoadingAnchorRoot.SetActive(false);
-        }
-    }
-
-    /// <summary>
-    /// Initialization the Network Anchor. Note, this will search of an Anchor Persistence behavior. If not present,
-    /// then this behavior will not function correctly.
-    /// </summary>
-    private void Start()
-    {
-        lastProcessedPosition = gameObject.transform.position;
-        anchorPersistence = gameObject.GetComponent<AnchorPersistence>();
-        if (anchorPersistence != null)
-        {
-            anchorPersistence.PersistenceEvent += OnPersistenceEvent;
-        }
-        else
-        {
-            Debug.LogError("[NetworkAnchor] Network Anchor can't function correctly when there isn't an Anchor Persistence behaviour applied.");
         }
     }
 
@@ -133,8 +124,76 @@ public class NetworkAnchor : MonoBehaviour
         {
             Debug.LogError("[NetworkAnchor] Network Anchor can't function correctly when there isn't a Network Anchor Manager.");
         }
+    }
 
-        OnPersistenceEvent(anchorPersistence, pendingPersistenceEventArgs);
+    /// <summary>
+    /// Set the default shared network anchor, if one hasn't be set yet.
+    /// </summary>
+    /// <param name="anchorId">The id of the anchor to share</param>
+    /// <param name="target">The game object that owns the anchor</param>
+    public IEnumerator SetDefaultAnchor(string anchorId, GameObject target)
+    {
+        while (anchorPlayer == null)
+        {
+            yield return null;
+        }
+
+        Debug.LogFormat("[NetworkAnchor] Setting Default Network Anchor.");
+        yield return anchorPlayer.SetDefaultNetworkAnchorAsync(anchorId, target);
+    }
+
+    /// <summary>
+    /// Checkout the network anchor for editting
+    /// </summary>
+    /// <param name="target">The game object that will modify anchor</param>
+    public IEnumerator CheckoutAnchorAsync(GameObject target)
+    {
+        while (anchorPlayer == null)
+        {
+            yield return null;
+        }
+
+        yield return anchorPlayer.CheckoutAnchorAsync();
+        checkoutPosition = target.transform.position;
+        Debug.LogFormat("[NetworkAnchor] Checkout anchor.");
+    }
+
+    /// <summary>
+    /// Checkin a new anchor to the server.
+    /// </summary>
+    /// <param name="anchorId">The id of the anchor to share</param>
+    /// <param name="target">The game object that owns the anchor</param>
+    public void CheckinAnchor(string anchorId, GameObject target)
+    {
+        if (anchorPlayer != null)
+        {
+            MoveAnchor(target.transform.position - checkoutPosition);
+            checkoutPosition = Vector3.zero;
+            anchorPlayer.CheckinAnchor(anchorId, target);
+            Debug.LogFormat("[NetworkAnchor] Checked in new anchor. (anchorId = {0})", anchorId);
+        }
+        else
+        {
+            Debug.LogFormat("[NetworkAnchor] Failed to check in new anchor, since there was no player. (anchorId = {0})", anchorId);
+        }
+    }
+
+    /// <summary>
+    /// Enable an offset to the new currently shared network anchor. This can be used to notify other players or a new 
+    /// anchor, before the anchor batch can be sent.
+    /// </summary>
+    /// <param name="offset">The position offset</param>
+    private void MoveAnchor(Vector3 offset)
+    {
+        if (anchorPlayer != null)
+        {
+            anchorPlayer.MoveAnchor(offset);
+            Debug.LogFormat("[NetworkAnchor] Moved anchor. (moveOffset = {0})", offset);
+        }
+        else
+        {
+            Debug.LogError("[NetworkAnchor] Failed to move anchor, since there was no player");
+        }
     }
 
     /// <summary>
@@ -182,67 +241,18 @@ public class NetworkAnchor : MonoBehaviour
         // If this is consumes the shared anchor. Update the container offset, before new anchor arrives.
         if (ImportedAnchorOffset != null && networkAnchorManager != null)
         {
-            ImportedAnchorOffset.transform.localPosition = networkAnchorManager.ImportedAnchorOffset;
-        }
-
-        // If this is owns the shared anchor. Notify others of position changes
-        if (!(lastProcessedPosition == gameObject.transform.position))
-        {
-            var moveDelta = gameObject.transform.position - lastProcessedPosition;
-            lastProcessedPosition = gameObject.transform.position;
-
-            if (anchorPlayer != null)
-            {
-                anchorPlayer.MovedAnchor(moveDelta);
-            }
+            ImportedAnchorOffset.transform.localPosition = networkAnchorManager.AnchorSource.Offset;
         }
     }
 
     /// <summary>
-    /// When receiving a remote anchor, apply it to this game object.
+    /// When receiving a remote anchor, notify other components. Once of these compoents should apply the new anchor
     /// </summary>
     private void OnReceivedRemoteAnchor(NetworkAnchorManager sender, ImportedAnchorChangedArgs args)
     {
-        if (args != null && anchorPersistence != null)
+        if (args != null && ReceivedRemoteAnchorTransferBatch != null)
         {
-            anchorPersistence.ApplyAnchor(args.TransferBatch, true);
-            pendingPersistenceEventArgs = null;
+            ReceivedRemoteAnchorTransferBatch(this, args.TransferBatch);
         }
-    }
-
-    /// <summary>
-    /// Handle load and save persistence events. During these events attempt to share an anchor if the current 
-    /// conditions make sense for the given event.
-    /// </summary>
-    private void OnPersistenceEvent(AnchorPersistence source, PersistenceEventArgs args)
-    {
-        if (args == null)
-        {
-            return;
-        }
-
-        if (args.AnchorOwner != gameObject)
-        {
-            Debug.LogErrorFormat("[NetworkAnchor] Unexpected persistence event, anchor owner is not the expected game object (anchor id: {0})", args.AnchorId);
-            return;
-        }
-
-        pendingPersistenceEventArgs = args;
-        if (anchorPlayer == null)
-        {
-            Debug.LogErrorFormat("[NetworkAnchor] Unable to process persistence event without a local instance of the Network Anchor Player (anchor id: {0})", args.AnchorId);
-            return;
-        }
-
-        if (pendingPersistenceEventArgs.Type == PersistenceEventType.Loaded)
-        {
-            anchorPlayer.DefaultNetworkAnchor(pendingPersistenceEventArgs.AnchorId, gameObject);
-        }
-        else if (pendingPersistenceEventArgs.Type == PersistenceEventType.Saved)
-        {
-            anchorPlayer.ShareNetworkAnchor(pendingPersistenceEventArgs.AnchorId, gameObject);
-        }
-
-        pendingPersistenceEventArgs = null;
     }
 }

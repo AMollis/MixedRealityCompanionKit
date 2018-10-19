@@ -3,9 +3,12 @@
 
 using UnityEngine;
 using System;
+using System.Collections;
+using UnityEngine.XR.WSA.Sharing;
 
 namespace Persistence
 {
+    [RequireComponent(typeof(NetworkAnchor))]
     [RequireComponent(typeof(AnchorPersistence))]
     public class CalibrationZone : MonoBehaviour
     {
@@ -23,39 +26,37 @@ namespace Persistence
         [HideInInspector]
         public bool IsCalibrating = false;
 
-        private struct OriginalTransform
-        {
-            public Vector3 position;
-            public Quaternion rotation;
-            public Vector3 scale;
-        }
-
-        private OriginalTransform originalTarget;
         private AnchorPersistence persistence;
+        private NetworkAnchor networkAnchor;
         
         void Awake()
         {
             TargetTransform = TargetTransform == null ? gameObject.transform : TargetTransform;
             PreviewTransform = PreviewTransform == null ? TargetTransform : PreviewTransform;
-
-            originalTarget.position = TargetTransform.localPosition;
-            originalTarget.rotation = TargetTransform.localRotation;
-            originalTarget.scale = TargetTransform.localScale;
-
             ResetPreviewTransform();
         }
 
         void Start()
         {
+            networkAnchor = GetComponent<NetworkAnchor>();
+            networkAnchor.ReceivedRemoteAnchorTransferBatch += NetworkAnchor_ReceivedRemoteAnchorTransferBatch;
+
             persistence = GetComponent<AnchorPersistence>();
             persistence.TargetGameObject = TargetTransform.gameObject;
-            persistence.AnchorLoaded += Persistence_AnchorLoaded;
-
-            Persistence_AnchorLoaded();
+            persistence.AnchorPersistenceEvent += Persistence_AnchorPersistenceEvent;
         }
 
-        private void Persistence_AnchorLoaded()
+        private void NetworkAnchor_ReceivedRemoteAnchorTransferBatch(NetworkAnchor sender, WorldAnchorTransferBatch batch)
         {
+            persistence.ApplyAnchor(batch, true);
+        }
+
+        private void Persistence_AnchorPersistenceEvent(AnchorPersistence source, AnchorPersistenceEventArgs args)
+        {
+            if (args.Type == AnchorPersistenceEventType.Loaded)
+            {
+                StartCoroutine(networkAnchor.SetDefaultAnchor(args.AnchorId, args.AnchorOwner));
+            }
         }
 
         public void AlignZone()
@@ -106,7 +107,8 @@ namespace Persistence
         public void PlaceAnchor(bool saveAnchor)
         {
             CommitPreviewTransform();
-            persistence.PlaceAnchor(saveAnchor);
+            string anchorId = persistence.PlaceAnchor(saveAnchor).ToString();
+            networkAnchor.CheckinAnchor(anchorId, TargetTransform.gameObject);
         }
 
         private void CommitPreviewTransform()
@@ -120,20 +122,22 @@ namespace Persistence
             }
         }
 
-        public bool ClearAnchor(bool removeSavedLocation)
+        public delegate void ClearAnchorResult(bool success);
+
+        public IEnumerator ClearAnchorAsync(bool removeSavedLocation, ClearAnchorResult callback)
         {
-            var ret =  persistence.ClearAnchor(removeSavedLocation);
-            Persistence_AnchorLoaded();
-            return ret;
+            yield return networkAnchor.CheckoutAnchorAsync(persistence.TargetGameObject);
+            if (networkAnchor.CheckedOutAnchor)
+            {
+                ClearAnchor(removeSavedLocation);
+            }
+            callback(networkAnchor.CheckedOutAnchor);
         }
 
-        public void ResetTransform(bool removeSavedLocation = false)
+        private bool ClearAnchor(bool removeSavedLocation)
         {
-            ClearAnchor(removeSavedLocation);
-            TargetTransform.position = originalTarget.position;
-            TargetTransform.rotation = originalTarget.rotation;
-            TargetTransform.localScale = originalTarget.scale;
-            ResetPreviewTransform();
+            var ret = persistence.ClearAnchor(removeSavedLocation);
+            return ret;
         }
 
         private void ResetPreviewTransform()

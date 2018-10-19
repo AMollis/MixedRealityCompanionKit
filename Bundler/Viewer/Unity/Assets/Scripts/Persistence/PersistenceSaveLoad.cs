@@ -33,7 +33,7 @@ namespace Persistence
         /// <summary>
         /// An anchor was saved to the cache
         /// </summary>
-        Saved,
+        Saved
     }
 
     /// <summary>
@@ -154,7 +154,7 @@ namespace Persistence
         /// fails, the old saved anchor will be lost.
         /// </summary>
         /// <returns>True if game object is anchored</returns>
-        public bool SaveLocation(GameObject gameObject, WorldAnchorStore store)
+        public bool SaveLocation(Guid storageId, GameObject gameObject, WorldAnchorStore store)
         {
             if (gameObject == null)
             {
@@ -179,7 +179,7 @@ namespace Persistence
             }
 
             // now save the new anchor
-            return SaveExistingLocation(Guid.NewGuid(), gameObject, store);
+            return SaveExistingLocation(storageId, gameObject, store);
         }
 
         /// <summary>

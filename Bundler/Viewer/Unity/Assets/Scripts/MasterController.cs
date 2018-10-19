@@ -165,34 +165,38 @@ public class MasterController : ImprovedSingletonBehavior<MasterController>
     {
         ShowMenu(MenuManager.MenuType.None);
 #if UNITY_WSA
-        SpatialMappingManager.gameObject.SetActive(true);
-        SpatialMappingManager.StartObserver();
-        ZoneCalibrationManager.Zones[0].ClearAnchor(true);
-        StartCoroutine(DelayStartStagePlacement());
+        StartCoroutine(ZoneCalibrationManager.Zones[0].ClearAnchorAsync(true, (bool cleared) =>
+        {
+            if (cleared)
+            {
+                SpatialMappingManager.gameObject.SetActive(true);
+                SpatialMappingManager.StartObserver();
+
+                isPlacingStage = true;
+                StageManager.SetPreviewMode(true);
+            }
+        }));
 #endif
-    }
-
-    private IEnumerator DelayStartStagePlacement()
-    {
-        yield return new WaitForSeconds(.5f);
-
-        isPlacingStage = true;
-        StageManager.SetPreviewMode(true);
     }
 
     public void SetDefaultStagePosition()
     {
-        var direction = new Vector3(Camera.main.transform.forward.x, 0, Camera.main.transform.forward.z);
-        direction.Normalize();
-        direction *= 1.00f;
-        direction.y = -.5f;
-        var newPosition = Camera.main.transform.position + direction;
-        SetStageOrigin(newPosition);
+        StartCoroutine(ZoneCalibrationManager.Zones[0].ClearAnchorAsync(true, (bool cleared) =>
+        {
+            if (cleared)
+            {
+                var direction = new Vector3(Camera.main.transform.forward.x, 0, Camera.main.transform.forward.z);
+                direction.Normalize();
+                direction *= 1.00f;
+                direction.y = -.5f;
+                var newPosition = Camera.main.transform.position + direction;
+                SetStageOrigin(newPosition);
+            }
+        }));
     }
 
-    public void SetStageOrigin(Vector3 position)
+    private void SetStageOrigin(Vector3 position)
     {
-        ZoneCalibrationManager.Zones[0].ClearAnchor(true);
         MoveStageOrigin(position);
         ZoneCalibrationManager.Zones[0].PlaceAnchor(true);
     }
