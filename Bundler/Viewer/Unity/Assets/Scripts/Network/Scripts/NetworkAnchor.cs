@@ -36,24 +36,29 @@ public class NetworkAnchor : MonoBehaviour
     public event OnReceivedRemoteAnchorTransferBatch ReceivedRemoteAnchorTransferBatch;
 
     /// <summary>
-    /// For this to function, there must be a global NetworkAnchorManager.
-    /// </summary>
-    private NetworkAnchorManager networkAnchorManager;
-
-    /// <summary>
     /// For this to function, the game object must also have a local instance of an NetworkAnchorPlayer.
     /// </summary>
     private NetworkAnchorPlayer anchorPlayer;
 
     /// <summary>
-    /// The last position of the game object
+    /// The last position of the game object, when checked-out
     /// </summary>
-    private Vector3 checkoutPosition;
+    private Matrix4x4 worldToLocalMatrixAtCheckOutTime = Matrix4x4.identity;
 
     /// <summary>
     /// The last received anchor id. Needed to move this anchor later.
     /// </summary>
-    private string lastReceivedAnchorId;
+    private string lastKnownAnchorId;
+
+    /// <summary>
+    /// Used for debugging only
+    /// </summary>
+    private Vector3 lastAppliedAnchorPosition;
+
+    /// <summary>
+    /// Used for debugging only
+    /// </summary>
+    private Quaternion lastAppliedAnchorRotation;
 
     private void Awake()
     {
@@ -73,32 +78,9 @@ public class NetworkAnchor : MonoBehaviour
     /// </summary>
     private void Update()
     {
-        WhenReadyInitializeAnchorManagerOnce();
         WhenReadyInitializeAnchorPlayerOnce();
         UpdateActiveGameObjects();
         UpdateAnchorPositions();
-    }
-
-    /// <summary>
-    /// Check if we can inititialize the anchor manager usage. If we can, only do the initialization work once. Note
-    /// that the anchor manager instance won't be ready at "Start".
-    /// </summary>
-    private void WhenReadyInitializeAnchorManagerOnce()
-    {
-        // Check if already initialized
-        if (networkAnchorManager != null)
-        {
-            return;
-        }
-
-        // Check if can initialize
-        networkAnchorManager = NetworkAnchorManager.Instance;
-        if (networkAnchorManager == null)
-        {
-            return;
-        }
-
-        networkAnchorManager.ImportedAnchorChanged += OnReceivedRemoteAnchor;
     }
 
     /// <summary>
@@ -120,15 +102,9 @@ public class NetworkAnchor : MonoBehaviour
             return;
         }
 
-        // If an anchor blob was received from another player, now's the time to handle this.
-        if (networkAnchorManager != null)
-        {
-            OnReceivedRemoteAnchor(networkAnchorManager, networkAnchorManager.ImportedAnchor);
-        }
-        else
-        {
-            Debug.LogError("[NetworkAnchor] This object can't function correctly when there isn't a Network Anchor Manager.");
-        }
+        anchorPlayer.ImportedAnchorChanged += OnReceivedRemoteAnchor;
+        anchorPlayer.ExportedAnchor += OnSharedRemoteAnchor;
+        OnReceivedRemoteAnchor(anchorPlayer, anchorPlayer.ImportedAnchor);
     }
 
     /// <summary>
@@ -151,7 +127,7 @@ public class NetworkAnchor : MonoBehaviour
     /// Checkout the network anchor for editting
     /// </summary>
     /// <param name="target">The game object that will modify anchor</param>
-    public IEnumerator CheckoutAnchorAsync(GameObject target)
+    public IEnumerator CheckOutAnchorAsync(GameObject target)
     {
         while (anchorPlayer == null)
         {
@@ -159,8 +135,8 @@ public class NetworkAnchor : MonoBehaviour
         }
 
         Debug.LogFormat("[NetworkAnchor] Checking out anchor.");
-        yield return anchorPlayer.CheckoutAnchorAsync();
-        checkoutPosition = target.transform.position;
+        yield return anchorPlayer.CheckOutAnchorAsync();
+        worldToLocalMatrixAtCheckOutTime = target.transform.worldToLocalMatrix;
         Debug.LogFormat("[NetworkAnchor] Check-out anchor. (checked out: {0})", CheckedOutAnchor);
     }
 
@@ -169,19 +145,25 @@ public class NetworkAnchor : MonoBehaviour
     /// </summary>
     /// <param name="anchorId">The id of the anchor to share</param>
     /// <param name="target">The game object that owns the anchor</param>
-    public void CheckinAnchor(string anchorId, GameObject target)
+    public void CheckInAnchor(string anchorId, GameObject target)
     {
         if (anchorPlayer != null)
         {
-            MoveAnchor(target.transform.position - checkoutPosition);
-            checkoutPosition = Vector3.zero;
+            // Move the last anchor by the amount the target was moved
+            if (!worldToLocalMatrixAtCheckOutTime.isIdentity)
+            {
+                var moveDelta = worldToLocalMatrixAtCheckOutTime.MultiplyPoint3x4(target.transform.position);
+                var rotateDelta = (worldToLocalMatrixAtCheckOutTime * target.transform.worldToLocalMatrix.inverse).rotation.eulerAngles;
+                MoveAnchor(moveDelta, rotateDelta);
+            }
+            worldToLocalMatrixAtCheckOutTime = Matrix4x4.identity;
 
-            Debug.LogFormat("[NetworkAnchor] Checking in new anchor. (anchorId = {0})", anchorId);
+            Debug.LogFormat("[NetworkAnchor] Checking in new anchor. (anchorId: {0})", anchorId);
             anchorPlayer.CheckInAnchor(anchorId, target);
         }
         else
         {
-            Debug.LogFormat("[NetworkAnchor] Failed to check in new anchor, since there was no player. (anchorId = {0})", anchorId);
+            Debug.LogFormat("[NetworkAnchor] Failed to check in new anchor, since there was no player. (anchorId: {0})", anchorId);
         }
     }
 
@@ -189,12 +171,12 @@ public class NetworkAnchor : MonoBehaviour
     /// Move the last shared achor by a given offset.
     /// </summary>
     /// <param name="offset">The position offset</param>
-    private void MoveAnchor(Vector3 offset)
+    private void MoveAnchor(Vector3 positionDelta, Vector3 eulerAnglesDelta)
     {
-        if (anchorPlayer != null && !string.IsNullOrEmpty(lastReceivedAnchorId))
+        if (anchorPlayer != null && !string.IsNullOrEmpty(lastKnownAnchorId))
         {
-            Debug.LogFormat("[NetworkAnchor] Moving last shared anchor. (moveOffset = {0})", offset);
-            anchorPlayer.MoveAnchor(lastReceivedAnchorId, offset);
+            Debug.LogFormat("[NetworkAnchor] Moving last shared anchor. (lastKnownAnchorId: {0}) (positionDelta: {1}) (eulerAnglesDelta: {2})", lastKnownAnchorId, positionDelta, eulerAnglesDelta);
+            anchorPlayer.MoveAnchor(lastKnownAnchorId, positionDelta, eulerAnglesDelta);
         }
         else
         {
@@ -207,13 +189,13 @@ public class NetworkAnchor : MonoBehaviour
     /// </summary>
     private void UpdateActiveGameObjects()
     {
-        // Check if we've recieved an anchor manager yet.
-        if (networkAnchorManager == null)
+        // Check if we've recieved an anchor player yet.
+        if (anchorPlayer == null)
         {
             return;
         }
 
-        if (LoadingAnchorRoot != null && networkAnchorManager.ImportingAnchor)
+        if (LoadingAnchorRoot != null && anchorPlayer.ImportingAnchor)
         {
             if (FoundAnchorRoot != null)
             {
@@ -244,27 +226,55 @@ public class NetworkAnchor : MonoBehaviour
     /// </summary>
     private void UpdateAnchorPositions()
     {
-        // If this doesn't have the anchor checked out, update the anchor's offset.
-        if (ImportedAnchorOffset != null && networkAnchorManager != null && !CheckedOutAnchor)
+        if (ImportedAnchorOffset == null)
         {
-            ImportedAnchorOffset.transform.localPosition = networkAnchorManager.AnchorOffset;
+            return;
+        }
+
+        // If this doesn't have the anchor checked out, update the anchor's offset.
+        if (anchorPlayer != null && !CheckedOutAnchor && !string.IsNullOrEmpty(lastKnownAnchorId))
+        {
+            anchorPlayer.ApplyMovement(lastKnownAnchorId, ImportedAnchorOffset);
+        }
+        else
+        {
+            ImportedAnchorOffset.transform.localPosition = Vector3.zero;
+            ImportedAnchorOffset.transform.localRotation = Quaternion.identity;
+        }
+
+        if (ImportedAnchorOffset.transform.localPosition != lastAppliedAnchorPosition ||
+            ImportedAnchorOffset.transform.localRotation != lastAppliedAnchorRotation)
+        {
+            lastAppliedAnchorPosition = ImportedAnchorOffset.transform.localPosition;
+            lastAppliedAnchorRotation = ImportedAnchorOffset.transform.localRotation;
+            Debug.LogFormat("[NetworkAnchor] Applied movement to anchor. (lastKnownAnchorId: {0}) (lastAppliedAnchorPosition: {1}) (lastAppliedAnchorRotation: {2})", lastKnownAnchorId, lastAppliedAnchorPosition, lastAppliedAnchorRotation);
         }
     }
 
     /// <summary>
     /// When receiving a remote anchor, notify other components. Once of these compoents should apply the new anchor
     /// </summary>
-    private void OnReceivedRemoteAnchor(NetworkAnchorManager sender, ImportedAnchorChangedArgs args)
+    private void OnReceivedRemoteAnchor(NetworkAnchorPlayer sender, ImportedAnchorChangedArgs args)
     {
         if (args == null)
         {
             return;
         }
 
-        lastReceivedAnchorId = args.AnchorId;
+        Debug.LogFormat("[NetworkAnchor] Received a new anchor from a remote client. (anchorId: {0})", args.AnchorId);
+        lastKnownAnchorId = args.AnchorId;
         if (ReceivedRemoteAnchorTransferBatch != null)
         {
             ReceivedRemoteAnchorTransferBatch(this, args.TransferBatch);
         }
+    }
+
+    /// <summary>
+    /// Called when the local player has successfully exported and shared an anchor.
+    /// </summary>
+    private void OnSharedRemoteAnchor(object sender, string anchorId)
+    {
+        Debug.LogFormat("[NetworkAnchor] Finished check-in and now sharing a new anchor. (anchorId: {0})", anchorId);
+        lastKnownAnchorId = anchorId;
     }
 }

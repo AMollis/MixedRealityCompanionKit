@@ -24,6 +24,59 @@ public class NetworkAnchorPlayer : NetworkBehaviour
     public static NetworkAnchorPlayer LocalInstance { get; private set; }
 
     /// <summary>
+    /// For this to function, there must be a global NetworkAnchorManager.
+    /// </summary>
+    private NetworkAnchorManager networkAnchorManager;
+
+    /// <summary>
+    /// This event is raised when a new anchor arrives from a different player.
+    /// </summary>
+    /// <param name="args">Contains the data that arrived.</param>
+    public delegate void OnImportedAnchorChanged(NetworkAnchorPlayer sender, ImportedAnchorChangedArgs args);
+    public event OnImportedAnchorChanged ImportedAnchorChanged;
+
+    /// <summary>
+    /// An event raised when this player has exported an anchor. The event will return the exported anchor id
+    /// </summary>
+    public event EventHandler<string> ExportedAnchor;
+
+    /// <summary>
+    /// Get the last received remote anchor
+    /// </summary>
+    public ImportedAnchorChangedArgs ImportedAnchor
+    {
+        get
+        {
+            if (networkAnchorManager != null)
+            {
+                return networkAnchorManager.ImportedAnchor;
+            }
+            else
+            {
+                return null;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Get if the local anchor player is in the process of receiving a shared anchor.
+    /// </summary>
+    public bool ImportingAnchor
+    {
+        get
+        {
+            if (networkAnchorManager != null)
+            {
+                return networkAnchorManager.ImportingAnchor;
+            }
+            else
+            {
+                return true;
+            }
+        }
+    }
+
+    /// <summary>
     /// Get if this player currently has the anchor checked out.
     /// </summary>
     public bool CheckedOutAnchor
@@ -40,6 +93,38 @@ public class NetworkAnchorPlayer : NetworkBehaviour
     {
         DontDestroyOnLoad(gameObject);
     }
+
+    /// <summary>
+    /// Update anchor player state.
+    /// </summary>
+    private void Update()
+    {
+        WhenReadyInitializeAnchorManagerOnce();
+    }
+
+
+    /// <summary>
+    /// Check if we can inititialize the anchor manager usage. If we can, only do the initialization work once. Note
+    /// that the anchor manager instance won't be ready at "Start".
+    /// </summary>
+    private void WhenReadyInitializeAnchorManagerOnce()
+    {
+        // Check if already initialized
+        if (networkAnchorManager != null)
+        {
+            return;
+        }
+
+        // Check if can initialize
+        networkAnchorManager = NetworkAnchorManager.Instance;
+        if (networkAnchorManager == null)
+        {
+            return;
+        }
+
+        networkAnchorManager.ImportedAnchorChanged += NetworkAnchorManager_ImportedAnchorChanged;
+    }
+
 
     /// <summary>
     /// Create a string with debug information.
@@ -84,15 +169,37 @@ public class NetworkAnchorPlayer : NetworkBehaviour
     }
 
     /// <summary>
+    /// When receiving a remote anchor, notify other components. Once of these compoents should apply the new anchor
+    /// </summary>
+    private void NetworkAnchorManager_ImportedAnchorChanged(NetworkAnchorManager sender, ImportedAnchorChangedArgs args)
+    {
+        if (ImportedAnchorChanged != null)
+        {
+            ImportedAnchorChanged(this, args);
+        }
+    }
+
+    /// <summary>
+    /// Apply the anchor movements to the given transform
+    /// </summary>
+    public void ApplyMovement(string anchorId, GameObject target)
+    {
+        if (networkAnchorManager != null)
+        {
+            networkAnchorManager.ApplyMovement(anchorId, target);
+        }
+    }
+
+    /// <summary>
     /// If anchor is unowned, export the anchor data stored in game object, take anchor ownership of the shared anchor,
     /// and broadcast anchor data to other players.
     /// </summary>
     public IEnumerator SetDefaultNetworkAnchorAsync(String anchorId, GameObject gameObject)
     {
-        if (NetworkAnchorManager.Instance != null && !NetworkAnchorManager.Instance.IsSharedAnchorOwned)
+        if (networkAnchorManager != null && !networkAnchorManager.IsSharedAnchorOwned)
         {
-            yield return CheckoutAnchorAsync();
-            if (CheckedOutAnchor && !NetworkAnchorManager.Instance.IsSharedAnchorOwned)
+            yield return CheckOutAnchorAsync();
+            if (CheckedOutAnchor && !networkAnchorManager.IsSharedAnchorOwned)
             {
                 CheckInAnchor(anchorId, gameObject);
             }
@@ -103,7 +210,7 @@ public class NetworkAnchorPlayer : NetworkBehaviour
     /// Check-out the shared anchor.
     /// </summary>
     /// <param name="result">Will be set to true if anchor is checked out by this player</param>
-    public IEnumerator CheckoutAnchorAsync()
+    public IEnumerator CheckOutAnchorAsync()
     {
         CheckoutRequest request;
         lock (currentRequestLock)
@@ -138,16 +245,16 @@ public class NetworkAnchorPlayer : NetworkBehaviour
     /// <summary>
     /// MOve the given anchor id
     /// </summary>
-    public void MoveAnchor(string anchorId, Vector3 offset)
+    public void MoveAnchor(string anchorId, Vector3 positionDelta, Vector3 eulerAnglesDelta)
     {
-        if (NetworkAnchorManager.Instance == null)
+        if (networkAnchorManager == null)
         {
             Debug.LogFormat("[NetworkAnchorPlayer] Ignoring move request, as there is no anchor manager. {0}", DebugInfo());
             return;
         }
 
-        Debug.LogFormat("[NetworkAnchorPlayer] Sending anchor move request. (offset: {0}) {1}", offset, DebugInfo());
-        CmdMoveAnchor(anchorId, offset);
+        Debug.LogFormat("[NetworkAnchorPlayer] Sending anchor move request. (anchorId: {0}) (positionDelta: {1}) (eulerAnglesDelta: {2}) {3}", anchorId, positionDelta, eulerAnglesDelta, DebugInfo());
+        CmdMoveAnchor(anchorId, positionDelta, eulerAnglesDelta);
     }
 
     /// <summary>
@@ -156,13 +263,13 @@ public class NetworkAnchorPlayer : NetworkBehaviour
     /// </summary>
     public void CheckInAnchor(String anchorId, GameObject gameObject)
     {
-        if (NetworkAnchorManager.Instance == null)
+        if (networkAnchorManager == null)
         {
             Debug.LogFormat("[NetworkAnchorPlayer] Ignoring check-in request, as there is no anchor manager. (anchor id: {0}) {1}", anchorId, DebugInfo());
             return;
         }
         
-        NetworkAnchorManager.Instance.ExportAnchorAsync(anchorId, gameObject, ExportingAnchorComplete);
+        networkAnchorManager.ExportAnchorAsync(anchorId, gameObject, ExportingAnchorComplete);
     }
 
     /// <summary>
@@ -178,6 +285,11 @@ public class NetworkAnchorPlayer : NetworkBehaviour
         {
             Debug.LogFormat("[NetworkAnchorPlayer] Succeeded to export. Sending anchor check-in request. {0}", DebugInfo());
             CheckInAnchor(SharedAnchorData.Create(sharedAnchorId));
+
+            if (ExportedAnchor != null)
+            {
+                ExportedAnchor(this, sharedAnchorId);
+            }
         }
         else
         {
@@ -198,13 +310,13 @@ public class NetworkAnchorPlayer : NetworkBehaviour
     [Command]
     private void CmdCheckOutAnchor(int requestId)
     {
-        if (NetworkAnchorManager.Instance == null)
+        if (networkAnchorManager == null)
         {
             Debug.LogFormat("[NetworkAnchorPlayer] Ignoring check-out request, as there is no anchor manager. {0}", DebugInfo());
             return;
         }
 
-        bool checkedOut = NetworkAnchorManager.Instance.CheckOutAnchorSource(this);
+        bool checkedOut = networkAnchorManager.CheckOutAnchorSource(this);
         RpcCheckOutAnchorResult(requestId, checkedOut);
     }
 
@@ -225,27 +337,27 @@ public class NetworkAnchorPlayer : NetworkBehaviour
     }
 
     [Command]
-    private void CmdMoveAnchor(string anchorId, Vector3 offset)
+    private void CmdMoveAnchor(string anchorId, Vector3 positionDelta, Vector3 eulerAnglesDelta)
     {
-        if (NetworkAnchorManager.Instance == null)
+        if (networkAnchorManager == null)
         {
             Debug.LogFormat("[NetworkAnchorPlayer] Ignoring move request, as there is no anchor manager. {0}", DebugInfo());
             return;
         }
 
-        NetworkAnchorManager.Instance.MoveAnchorSource(this, anchorId, offset);
+        networkAnchorManager.MoveAnchorSource(this, anchorId, positionDelta, eulerAnglesDelta);
     }
 
     [Command]
     private void CmdCheckInAnchor(SharedAnchorData newAnchorData)
     {
-        if (NetworkAnchorManager.Instance == null)
+        if (networkAnchorManager == null)
         {
             Debug.LogFormat("[NetworkAnchorPlayer] Ignoring check-in request, as there is no anchor manager. {0}", DebugInfo());
             return;
         }
 
-        NetworkAnchorManager.Instance.CheckInAnchorSource(this, newAnchorData);
+        networkAnchorManager.CheckInAnchorSource(this, newAnchorData);
     }
 
     /// <summary>

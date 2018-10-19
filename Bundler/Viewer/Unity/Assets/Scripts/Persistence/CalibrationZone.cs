@@ -108,7 +108,7 @@ namespace Persistence
         {
             CommitPreviewTransform();
             string anchorId = persistence.PlaceAnchor(saveAnchor).ToString();
-            networkAnchor.CheckinAnchor(anchorId, TargetTransform.gameObject);
+            networkAnchor.CheckInAnchor(anchorId, TargetTransform.gameObject);
         }
 
         private void CommitPreviewTransform()
@@ -126,7 +126,7 @@ namespace Persistence
 
         public IEnumerator ClearAnchorAsync(bool removeSavedLocation, ClearAnchorResult callback)
         {
-            yield return networkAnchor.CheckoutAnchorAsync(persistence.TargetGameObject);
+            yield return networkAnchor.CheckOutAnchorAsync(persistence.TargetGameObject);
             if (networkAnchor.CheckedOutAnchor)
             {
                 ClearAnchor(removeSavedLocation);

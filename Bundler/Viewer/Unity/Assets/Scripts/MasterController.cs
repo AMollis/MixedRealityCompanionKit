@@ -32,6 +32,7 @@ public class MasterController : ImprovedSingletonBehavior<MasterController>
     public GameObject Finger;
 
     private bool isPlacingStage;
+    private bool isLoadingStagePlacement;
 
     private bool hasSource;
     private bool delayHiding;
@@ -104,6 +105,8 @@ public class MasterController : ImprovedSingletonBehavior<MasterController>
     {
         if (isPlacingStage)
         {
+            HideMenu();
+
             SpatialMappingManager.StopObserver();
             isPlacingStage = false;
             StageManager.SetPreviewMode(false);
@@ -127,7 +130,7 @@ public class MasterController : ImprovedSingletonBehavior<MasterController>
             if (!hasSource && !delayShowing || force)
             {
                 Finger.SetActive(false);
-                ShowMenu(MenuManager.MenuType.None);
+                HideMenu();
                 Debug.Log("DelayHideMenu");
             }
         }
@@ -163,20 +166,41 @@ public class MasterController : ImprovedSingletonBehavior<MasterController>
 
     public void StartStagePlacement()
     {
-        ShowMenu(MenuManager.MenuType.None);
+        if (isLoadingStagePlacement)
+        {
+            return;
+        }
+
+        HideMenu();
+
 #if UNITY_WSA
+        isLoadingStagePlacement = true;
         StartCoroutine(ZoneCalibrationManager.Zones[0].ClearAnchorAsync(true, (bool cleared) =>
         {
-            if (cleared)
+            if (cleared && isLoadingStagePlacement)
             {
                 SpatialMappingManager.gameObject.SetActive(true);
                 SpatialMappingManager.StartObserver();
-
-                isPlacingStage = true;
-                StageManager.SetPreviewMode(true);
+                StartCoroutine(DelayStartStagePlacement());
+            }
+            else
+            {
+                isLoadingStagePlacement = false;
             }
         }));
 #endif
+    }
+
+    private IEnumerator DelayStartStagePlacement()
+    {
+        yield return new WaitForSeconds(.5f);
+
+        if (isLoadingStagePlacement)
+        {
+            isPlacingStage = true;
+            isLoadingStagePlacement = false;
+            StageManager.SetPreviewMode(true);
+        }
     }
 
     public void SetDefaultStagePosition()

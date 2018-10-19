@@ -86,20 +86,6 @@ public struct SharedAnchorData
     }
 
     /// <summary>
-    /// Move the given anchor by the given offset
-    /// </summary>
-    /// <param name="original">The orginal anchor data to move</param>
-    /// <param name="offset">The offset to move by</param>
-    public static SharedAnchorData Move(SharedAnchorData original, Vector3 offset)
-    {
-        SharedAnchorData result = new SharedAnchorData();
-        result.SourceIp = original.SourceIp;
-        result.AnchorId = original.AnchorId;
-        result.Offset = original.Offset + offset;
-        return result;
-    }
-
-    /// <summary>
     /// Get an empty, invalid, anchor data
     /// </summary>
     public static SharedAnchorData Empty
@@ -119,12 +105,6 @@ public struct SharedAnchorData
     /// The id (or name) of the anchor.
     /// </summary>
     public string AnchorId;
-
-    /// <summary>
-    /// The offset the of the anchor
-    /// </summary>
-    public Vector3 Offset;
-
     /// <summary>
     /// Test if this meta data object hold valid information
     /// </summary>
@@ -177,6 +157,42 @@ public class ImportedAnchorChangedArgs
     }
 }
 
+/// <summary>
+/// A struct that contains predicted movements of a network anchor
+/// </summary>
+public struct NetworkAnchorMovement
+{
+    public static NetworkAnchorMovement Create(string anchorId)
+    {
+        NetworkAnchorMovement movement = new NetworkAnchorMovement();
+        movement.AnchorId = anchorId;
+        movement.Position = Vector3.zero;
+        movement.EulerAngles = Vector3.zero;
+        return movement;
+    }
+
+    public static NetworkAnchorMovement Create(string anchorId, Vector3 position, Vector3 eulerAngles)
+    {
+        NetworkAnchorMovement movement = new NetworkAnchorMovement();
+        movement.AnchorId = anchorId;
+        movement.Position = position;
+        movement.EulerAngles = eulerAngles;
+        return movement;
+    }
+
+    public string AnchorId;
+    public Vector3 Position;
+    public Vector3 EulerAngles;
+}
+
+/// <summary>
+/// A sync list that shares anchor movements across clients
+/// </summary>
+public class NetworkAnchorMovementList : SyncListStruct<NetworkAnchorMovement>
+{
+}
+
+
 public class NetworkAnchorManager : NetworkBehaviour
 {
     /// <summary>
@@ -199,13 +215,16 @@ public class NetworkAnchorManager : NetworkBehaviour
     private SharedAnchorData SyncVar_AnchorSource;
 
     /// <summary>
-    /// Get the amount the last applied anchor should be moved by.
+    /// The sync var used to notify other clients the anchor source is checked out
     /// </summary>
-    public Vector3 AnchorOffset
-    {
-        get;
-        private set;
-    }
+    [HideInInspector]
+    private bool SyncVar_AnchorSourceCheckedOut;
+
+    /// <summary>
+    /// The sync list used to share anchor movements across clients.
+    /// </summary>
+    [HideInInspector]
+    private NetworkAnchorMovementList SyncList_AnchorMovements = new NetworkAnchorMovementList();
 
     /// <summary>
     /// The player that currently has the AnchorSource checked out. Only one player can edit the anchor at a time
@@ -231,7 +250,7 @@ public class NetworkAnchorManager : NetworkBehaviour
     {
         get
         {
-            return ImportingAnchorSource.IsValid;
+            return ImportingAnchorSource.IsValid || SyncVar_AnchorSourceCheckedOut;
         }
     }
 
@@ -293,9 +312,9 @@ public class NetworkAnchorManager : NetworkBehaviour
     private const float retryDelaySeconds = 1.0f;
 
     /// <summary>
-    /// The number of times to retry
+    /// The number of times to retry exporting before giving up
     /// </summary>
-    private const int retryAttempts = 5;
+    private const int retryExportAttempts = 30;
 
     #region AnchorSource Operations
     /// <summary>
@@ -316,6 +335,7 @@ public class NetworkAnchorManager : NetworkBehaviour
             {
                 Debug.LogFormat("[NetworkAnchorManager] Server checked out anchor source. (player.netId: {0})", player.netId);
                 checkedOut = true;
+                SyncVar_AnchorSourceCheckedOut = true;
                 AnchorSourceCheckedOutBy = player;
             }
             else
@@ -331,23 +351,21 @@ public class NetworkAnchorManager : NetworkBehaviour
     /// Move the anchor source
     /// </summary>
     [Server]
-    public bool MoveAnchorSource(NetworkAnchorPlayer player, string anchorId, Vector3 offset)
+    public bool MoveAnchorSource(NetworkAnchorPlayer player, string anchorId, Vector3 positionDelta, Vector3 eulerAnglesDelta)
     {
         bool moved = false;
         lock (AnchorCheckoutLock)
         {
             if (AnchorSourceCheckedOutBy != null &&
-                player.netId == AnchorSourceCheckedOutBy.netId &&
-                anchorId == SyncVar_AnchorSource.AnchorId &&
-                SyncVar_AnchorSource.IsValid)
+                player.netId == AnchorSourceCheckedOutBy.netId)
             {
-                Debug.LogFormat("[NetworkAnchorManager] Server moved anchor source. (player.netId: {0}) (offset: {1}) (move anchorId: {2}) {3} {4}", player.netId, offset, anchorId, SyncVar_AnchorSource.ToString(), DebugInfo());
-                SyncVar_AnchorSource = SharedAnchorData.Move(SyncVar_AnchorSource, offset);
+                Debug.LogFormat("[NetworkAnchorManager] Server moved anchor source. (player.netId: {0}) (anchorId: {1}) (positionDelta: {2}) (eulerAnglesDelta: {3}) {4}", player.netId, anchorId, positionDelta, eulerAnglesDelta, DebugInfo());
+                MoveAllAnchors(positionDelta, eulerAnglesDelta);
                 moved = true;
             }
             else
             {
-                Debug.LogFormat("[NetworkAnchorManager] Server could not move anchor source. (player.netId: {0}) (move anchorId: {1}) {2} {3}", player.netId, anchorId, SyncVar_AnchorSource.ToString(), DebugInfo());
+                Debug.LogFormat("[NetworkAnchorManager] Server could not move anchor source. (player.netId: {0}) (anchorId: {1}) (positionDelta: {2}) (eulerAnglesDelta: {3}) {4}", player.netId, anchorId, positionDelta, eulerAnglesDelta, DebugInfo());
             }
         }
         return moved;
@@ -372,6 +390,7 @@ public class NetworkAnchorManager : NetworkBehaviour
                     SyncVar_AnchorSource = anchorData;
                 }
 
+                SyncVar_AnchorSourceCheckedOut = false;
                 Debug.LogFormat("[NetworkAnchorManager] Server checked in anchor source. (player.netId: {0}) {1} {2} {3}", player.netId, anchorData.ToString(), SyncVar_AnchorSource.ToString(), DebugInfo());
             }
             else
@@ -454,7 +473,7 @@ public class NetworkAnchorManager : NetworkBehaviour
                 Debug.LogErrorFormat("[NetworkAnchorManager] Unable to export anchor. Game object is missing an anchor. (anchor id: {0})", anchorId);
                 result = ExportingAnchorResult.FailedGameObjectMissingAnchor;
             }
-            else if (attempts > retryAttempts)
+            else if (attempts > retryExportAttempts)
             {
                 Debug.LogErrorFormat("[NetworkAnchorManager] Failed to export, attempted to retry exporting too many times. (anchor id: {0})", anchorId);
                 result = ExportingAnchorResult.FailedRetriedTooManyTimes;
@@ -595,7 +614,7 @@ public class NetworkAnchorManager : NetworkBehaviour
     /// </summary>
     private void SyncVar_AnchorSourceChanged(SharedAnchorData anchorSource)
     {
-        AnchorOffset = anchorSource.Offset;
+        InitializeAnchorMovement(anchorSource.AnchorId);
         ImportAnchorData(anchorSource);
     }
 
@@ -645,7 +664,7 @@ public class NetworkAnchorManager : NetworkBehaviour
             ImportingAnchorSource = anchorSource;
 
             // begin requesting data
-            anchorTransmitter.RequestData(ImportingAnchorSource.SourceIp);
+            anchorTransmitter.RequestData(ImportingAnchorSource.AnchorId, ImportingAnchorSource.SourceIp);
 
             return true;
         }
@@ -656,30 +675,40 @@ public class NetworkAnchorManager : NetworkBehaviour
     /// </summary>
     private void RequestAnchorDataCompleted(GenericNetworkTransmitter sender, RequestDataCompletedArgs args)
     {
-        if (!args.Successful)
+        lock (ImportingAndExportingLock)
         {
-            Debug.LogErrorFormat("[NetworkAnchorManager] Failed to receive anchor data. {0}", DebugInfo());
-            ImportAnchorDataCompleted(null);
-            return;
+            if (!args.Successful)
+            {
+                Debug.LogErrorFormat("[NetworkAnchorManager] Failed to receive anchor data. {0}", DebugInfo());
+                ImportAnchorDataCompleted(null);
+                return;
+            }
+
+            if (args.Data == null || args.Data.Length == 0)
+            {
+                Debug.LogErrorFormat("[NetworkAnchorManager] Binary anchor data is null or empty, ignoring request to import anchor data. {0}", DebugInfo());
+                ImportAnchorDataCompleted(null);
+                return;
+            }
+
+            if (args.RequestId != ImportingAnchorSource.AnchorId)
+            {
+                Debug.LogErrorFormat("[NetworkAnchorManager] Received data for anchor, but no longer importing this anchor id. (received anchor: {0}), {1}", DebugInfo());
+                ImportAnchorDataCompleted(null);
+                return;
+            }
         }
 
-        if (args.Data == null || args.Data.Length == 0)
-        {
-            Debug.LogErrorFormat("[NetworkAnchorManager] Binary anchor data is null or empty, ignoring request to import anchor data. {0}", DebugInfo());
-            ImportAnchorDataCompleted(null);
-            return;
-        }
-
-        StartImportingAnchor(args.Data);
+        StartImportingAnchor(args.RequestId, args.Data);
     }
 
     /// <summary>
     /// Start importing anchor data.
     /// </summary>
-    private void StartImportingAnchor(byte[] anchorData)
+    private void StartImportingAnchor(string anchorId, byte[] anchorData)
     {
         Debug.LogFormat("[NetworkAnchorManager] Starting import of binary anchor data. (bytes: {0}) {1}", anchorData.Length, DebugInfo());
-        WorldAnchorTransferBatch.ImportAsync(anchorData, (SerializationCompletionReason status, WorldAnchorTransferBatch batch) => { BatchImportAsyncCompleted(status, batch, anchorData); });
+        WorldAnchorTransferBatch.ImportAsync(anchorData, (SerializationCompletionReason status, WorldAnchorTransferBatch batch) => { BatchImportAsyncCompleted(anchorId, status, batch, anchorData); });
     }
 
     /// <summary>
@@ -688,6 +717,7 @@ public class NetworkAnchorManager : NetworkBehaviour
     /// <param name="status">Tracks if the import worked</param>
     /// <param name="batch">The WorldAnchorTransferBatch that has the anchor information.</param>
     private void BatchImportAsyncCompleted(
+        string anchorId,
         SerializationCompletionReason status,
         WorldAnchorTransferBatch batch,
         byte[] anchorData)
@@ -699,28 +729,28 @@ public class NetworkAnchorManager : NetworkBehaviour
         }
         else
         {
-            Debug.LogErrorFormat("[NetworkAnchorManager] Anchor import has failed, retrying (status: {0})", status);
-            StartCoroutine(RetryImportingAnchor(anchorData));
+            Debug.LogErrorFormat("[NetworkAnchorManager] Anchor import has failed, retrying (status: {0}) (batch.anchorCount: {1})", status, batch.anchorCount);
+            StartCoroutine(RetryImportingAnchor(anchorId, anchorData));
         }
     }
 
     /// <summary>
     /// Retry sharing anchor, if it's still possible to.
     /// </summary>
-    private System.Collections.IEnumerator RetryImportingAnchor(byte[] data)
+    private System.Collections.IEnumerator RetryImportingAnchor(string anchorId, byte[] data)
     {
         yield return new WaitForSeconds(retryDelaySeconds);
 
         lock (ImportingAndExportingLock)
         {
             // If loading and received an anchor, don't continue to try to share anchor data.
-            if (ImportingAnchorSource.IsValid)
+            if (ImportingAnchorSource.IsValid && anchorId == ImportingAnchorSource.AnchorId)
             {
-                StartImportingAnchor(data);
+                StartImportingAnchor(anchorId, data);
             }
             else
             {
-                Debug.LogFormat("[NetworkAnchorManager] Can't retry importing anchor, not using remote anchor. {0}", DebugInfo());
+                Debug.LogFormat("[NetworkAnchorManager] Can't retry importing anchor, not using this remote anchor anymore. (old anchor id: {0}) {1}", anchorId, DebugInfo());
             }
         }
     }
@@ -754,9 +784,6 @@ public class NetworkAnchorManager : NetworkBehaviour
                 return;
             }
 
-            // Done importing apply offset
-            AnchorOffset = ImportingAnchorSource.Offset;
-
             // save the last recieve anchor data
             ImportedAnchor = newImportedAnchor;
 
@@ -770,6 +797,86 @@ public class NetworkAnchorManager : NetworkBehaviour
         }
     }
     #endregion Importing Anchor Methods
+
+    #region Anchor Movement Methods
+    /// <summary>
+    /// Insert a new anchor into the movement list, if that anchor doesn't exist
+    /// </summary>
+    /// <param name="anchorId">The id of the new anchor</param>
+    [Server]
+    private void InitializeAnchorMovement(string anchorId)
+    {
+        NetworkAnchorMovement? movement = FindNetworkAnchorMovement(anchorId);
+        if (!movement.HasValue)
+        {
+            Debug.LogFormat("[NetworkAnchorManager] Server is adding new anchor movement to list. (anchorId: {0}) {1}", anchorId, DebugInfo());
+            SyncList_AnchorMovements.Add(NetworkAnchorMovement.Create(anchorId));
+        }
+    }
+
+    /// <summary>
+    /// Move all the known anchors.
+    /// </summary>
+    [Server]
+    private void MoveAllAnchors(Vector3 positionDelta, Vector3 eulerAnglesDelta)
+    {
+        Debug.LogFormat("[NetworkAnchorManager] Server is moving all anchors currently in movement list. (positionDelta: {0}) (eulerAnglesDelta: {1}) (SyncList_AnchorMovements.Count: {2}) {3}", positionDelta, eulerAnglesDelta, SyncList_AnchorMovements.Count, DebugInfo());
+        for (int i = 0; i < SyncList_AnchorMovements.Count; i++)
+        {
+            var oldMovement = SyncList_AnchorMovements[i];
+            SyncList_AnchorMovements[i] = NetworkAnchorMovement.Create(
+                oldMovement.AnchorId, 
+                oldMovement.Position + positionDelta, 
+                oldMovement.EulerAngles + eulerAnglesDelta);
+        }
+    }
+
+    /// <summary>
+    /// Search for the given anchorId in the SyncList_AnchorMovements. If not found, null is returned.
+    /// </summary>
+    private NetworkAnchorMovement? FindNetworkAnchorMovement(string anchorId)
+    {
+        NetworkAnchorMovement? result = null;
+
+        // search backwards, as the item is more like to be at the end
+        for (int i = SyncList_AnchorMovements.Count - 1; i >= 0; i--)
+        {
+            var item = SyncList_AnchorMovements[i];
+            if (item.AnchorId == anchorId)
+            {
+                result = item;
+                break;
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Apply the anchor movements to the given transform
+    /// </summary>
+    public void ApplyMovement(string anchorId, GameObject target)
+    {
+        if (target == null)
+        {
+            return;
+        }
+
+        NetworkAnchorMovement? movement = FindNetworkAnchorMovement(anchorId);
+
+        if (movement.HasValue)
+        {
+            var value = movement.Value;
+            target.transform.localPosition = value.Position;
+            target.transform.localRotation = Quaternion.Euler(value.EulerAngles);
+        }
+        else
+        {
+            target.transform.localPosition = Vector3.zero;
+            target.transform.localRotation = Quaternion.identity;
+        }
+    }
+    #endregion Anchor Movement Methods
 
     #region Initialization Methods
     /// <summary>

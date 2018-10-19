@@ -38,9 +38,10 @@ public class MenuBase : MonoBehaviour
             return;
         }
 
-        isVisible = false;
         if (isActiveAndEnabled)
         {
+            isVisible = false;
+
             if (GetComponent<Animator>() != null)
             {
                 GetComponent<Animator>().Play("PopOut");
