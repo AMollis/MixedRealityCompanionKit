@@ -50,6 +50,11 @@ public class NetworkAnchor : MonoBehaviour
     /// </summary>
     private Vector3 checkoutPosition;
 
+    /// <summary>
+    /// The last received anchor id. Needed to move this anchor later.
+    /// </summary>
+    private string lastReceivedAnchorId;
+
     private void Awake()
     {
         if (FoundAnchorRoot != null)
@@ -122,7 +127,7 @@ public class NetworkAnchor : MonoBehaviour
         }
         else
         {
-            Debug.LogError("[NetworkAnchor] Network Anchor can't function correctly when there isn't a Network Anchor Manager.");
+            Debug.LogError("[NetworkAnchor] This object can't function correctly when there isn't a Network Anchor Manager.");
         }
     }
 
@@ -138,7 +143,7 @@ public class NetworkAnchor : MonoBehaviour
             yield return null;
         }
 
-        Debug.LogFormat("[NetworkAnchor] Setting Default Network Anchor.");
+        Debug.LogFormat("[NetworkAnchor] Setting default anchor.");
         yield return anchorPlayer.SetDefaultNetworkAnchorAsync(anchorId, target);
     }
 
@@ -153,9 +158,10 @@ public class NetworkAnchor : MonoBehaviour
             yield return null;
         }
 
+        Debug.LogFormat("[NetworkAnchor] Checking out anchor.");
         yield return anchorPlayer.CheckoutAnchorAsync();
         checkoutPosition = target.transform.position;
-        Debug.LogFormat("[NetworkAnchor] Checkout anchor.");
+        Debug.LogFormat("[NetworkAnchor] Check-out anchor. (checked out: {0})", CheckedOutAnchor);
     }
 
     /// <summary>
@@ -169,8 +175,9 @@ public class NetworkAnchor : MonoBehaviour
         {
             MoveAnchor(target.transform.position - checkoutPosition);
             checkoutPosition = Vector3.zero;
+
+            Debug.LogFormat("[NetworkAnchor] Checking in new anchor. (anchorId = {0})", anchorId);
             anchorPlayer.CheckinAnchor(anchorId, target);
-            Debug.LogFormat("[NetworkAnchor] Checked in new anchor. (anchorId = {0})", anchorId);
         }
         else
         {
@@ -179,20 +186,19 @@ public class NetworkAnchor : MonoBehaviour
     }
 
     /// <summary>
-    /// Enable an offset to the new currently shared network anchor. This can be used to notify other players or a new 
-    /// anchor, before the anchor batch can be sent.
+    /// Move the last shared achor by a given offset.
     /// </summary>
     /// <param name="offset">The position offset</param>
     private void MoveAnchor(Vector3 offset)
     {
-        if (anchorPlayer != null)
+        if (anchorPlayer != null && !string.IsNullOrEmpty(lastReceivedAnchorId))
         {
-            anchorPlayer.MoveAnchor(offset);
-            Debug.LogFormat("[NetworkAnchor] Moved anchor. (moveOffset = {0})", offset);
+            Debug.LogFormat("[NetworkAnchor] Moving last shared anchor. (moveOffset = {0})", offset);
+            anchorPlayer.MoveAnchor(lastReceivedAnchorId, offset);
         }
         else
         {
-            Debug.LogError("[NetworkAnchor] Failed to move anchor, since there was no player");
+            Debug.LogError("[NetworkAnchor] Failed to move last shared anchor, since there was no player or no last received anchor");
         }
     }
 
@@ -238,10 +244,10 @@ public class NetworkAnchor : MonoBehaviour
     /// </summary>
     private void UpdateAnchorPositions()
     {
-        // If this is consumes the shared anchor. Update the container offset, before new anchor arrives.
-        if (ImportedAnchorOffset != null && networkAnchorManager != null)
+        // If this doesn't have the anchor checked out, update the anchor's offset.
+        if (ImportedAnchorOffset != null && networkAnchorManager != null && !CheckedOutAnchor)
         {
-            ImportedAnchorOffset.transform.localPosition = networkAnchorManager.AnchorSource.Offset;
+            ImportedAnchorOffset.transform.localPosition = networkAnchorManager.AnchorOffset;
         }
     }
 
@@ -250,7 +256,13 @@ public class NetworkAnchor : MonoBehaviour
     /// </summary>
     private void OnReceivedRemoteAnchor(NetworkAnchorManager sender, ImportedAnchorChangedArgs args)
     {
-        if (args != null && ReceivedRemoteAnchorTransferBatch != null)
+        if (args == null)
+        {
+            return;
+        }
+
+        lastReceivedAnchorId = args.AnchorId;
+        if (ReceivedRemoteAnchorTransferBatch != null)
         {
             ReceivedRemoteAnchorTransferBatch(this, args.TransferBatch);
         }

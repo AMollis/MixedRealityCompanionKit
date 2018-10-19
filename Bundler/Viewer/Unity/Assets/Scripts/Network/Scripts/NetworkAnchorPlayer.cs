@@ -133,9 +133,9 @@ public class NetworkAnchorPlayer : NetworkBehaviour
     }
 
     /// <summary>
-    /// Send a move request to the anchor manager server.
+    /// MOve the given anchor id
     /// </summary>
-    public void MoveAnchor(Vector3 offset)
+    public void MoveAnchor(string anchorId, Vector3 offset)
     {
         if (NetworkAnchorManager.Instance == null)
         {
@@ -144,7 +144,7 @@ public class NetworkAnchorPlayer : NetworkBehaviour
         }
 
         Debug.LogFormat("[NetworkAnchorPlayer] Sending anchor move request. (offset: {0}) {1}", offset, DebugInfo());
-        CmdMoveAnchor(NetworkAnchorManager.Instance.AnchorSource, offset);
+        CmdMoveAnchor(anchorId, offset);
     }
 
     /// <summary>
@@ -168,10 +168,10 @@ public class NetworkAnchorPlayer : NetworkBehaviour
     /// <param name="sharedAnchorId">The id of the shared anchor</param>
     /// <param name="sharedGameObject">The game object that owns the anchor</param>
     /// <param name="result">The share result</param>
-    private void ExportingAnchorComplete(String sharedAnchorId, GameObject sharedGameObject, NetworkAnchorManager.SharingAnchorResult result)
+    private void ExportingAnchorComplete(String sharedAnchorId, GameObject sharedGameObject, NetworkAnchorManager.ExportingAnchorResult result)
     {
         // Start taking ownership of the anchor
-        if (result == NetworkAnchorManager.SharingAnchorResult.Success)
+        if (result == NetworkAnchorManager.ExportingAnchorResult.Success)
         {
             Debug.LogFormat("[NetworkAnchorPlayer] Succeeded to export. Sending anchor check-in request. {0}", DebugInfo());
             CmdCheckinAnchor(SharedAnchorData.Create(sharedAnchorId));
@@ -215,7 +215,7 @@ public class NetworkAnchorPlayer : NetworkBehaviour
     }
 
     [Command]
-    private void CmdMoveAnchor(SharedAnchorData anchorData, Vector3 offset)
+    private void CmdMoveAnchor(string anchorId, Vector3 offset)
     {
         if (NetworkAnchorManager.Instance == null)
         {
@@ -223,7 +223,7 @@ public class NetworkAnchorPlayer : NetworkBehaviour
             return;
         }
 
-        NetworkAnchorManager.Instance.MoveAnchorSource(this, anchorData, offset);
+        NetworkAnchorManager.Instance.MoveAnchorSource(this, anchorId, offset);
     }
 
     [Command]

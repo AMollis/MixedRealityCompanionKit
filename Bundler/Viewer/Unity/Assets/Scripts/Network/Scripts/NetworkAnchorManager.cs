@@ -73,6 +73,10 @@ public class WorldAnchorTransferBatch
 [Serializable]
 public struct SharedAnchorData
 {
+    /// <summary>
+    /// Create a new shared anchor data object.
+    /// </summary>
+    /// <param name="anchorId">The id of the anchor to share.</param>
     public static SharedAnchorData Create(string anchorId)
     {
         SharedAnchorData result = new SharedAnchorData();
@@ -80,12 +84,18 @@ public struct SharedAnchorData
         result.AnchorId = anchorId;
         return result;
     }
-    public static SharedAnchorData Create(SharedAnchorData original, Vector3 offset)
+
+    /// <summary>
+    /// Move the given anchor by the given offset
+    /// </summary>
+    /// <param name="original">The orginal anchor data to move</param>
+    /// <param name="offset">The offset to move by</param>
+    public static SharedAnchorData Move(SharedAnchorData original, Vector3 offset)
     {
         SharedAnchorData result = new SharedAnchorData();
         result.SourceIp = original.SourceIp;
         result.AnchorId = original.AnchorId;
-        result.Offset = original.Offset;
+        result.Offset = original.Offset + offset;
         return result;
     }
 
@@ -181,14 +191,17 @@ public class NetworkAnchorManager : NetworkBehaviour
         }
     }
 
+    /// <summary>
+    /// The sync var used to determine what client own the anchor. Private to prevent outside componets from changing this.
+    /// </summary>
     [SyncVar(hook = "SyncVar_AnchorSourceChanged")]
-    [Tooltip("The current source of the shared anchor.")]
+    [HideInInspector]
     private SharedAnchorData SyncVar_AnchorSource;
 
     /// <summary>
-    /// Get the anchor source data
+    /// Get the amount the last applied anchor should be moved by.
     /// </summary>
-    public SharedAnchorData AnchorSource
+    public Vector3 AnchorOffset
     {
         get;
         private set;
@@ -254,7 +267,7 @@ public class NetworkAnchorManager : NetworkBehaviour
     {
         get
         {
-            return AnchorSource.IsValid;
+            return SyncVar_AnchorSource.IsValid;
         }
     }
 
@@ -265,7 +278,7 @@ public class NetworkAnchorManager : NetworkBehaviour
     {
         get
         {
-            return IsSharedAnchorOwned && AnchorSource.SourceIp == LocalAddress;
+            return IsSharedAnchorOwned && SyncVar_AnchorSource.SourceIp == LocalAddress;
         }
     }
 
@@ -301,13 +314,13 @@ public class NetworkAnchorManager : NetworkBehaviour
         {
             if (AnchorSourceCheckedOutBy == null || AnchorSourceCheckedOutBy.netId == player.netId)
             {
-                Debug.LogFormat("[NetworkAnchorManager] Checked out anchor source. (player.netId: {0})", player.netId);
+                Debug.LogFormat("[NetworkAnchorManager] Server checked out anchor source. (player.netId: {0})", player.netId);
                 checkedOut = true;
                 AnchorSourceCheckedOutBy = player;
             }
             else
             {
-                Debug.LogFormat("[NetworkAnchorManager] Could not checked out anchor source, already checked out. (player.netId: {0}) {1}", player.netId, DebugInfo());
+                Debug.LogFormat("[NetworkAnchorManager] Server could not checked out anchor source, already checked out. (player.netId: {0}) {1}", player.netId, DebugInfo());
             }
         }
 
@@ -318,23 +331,23 @@ public class NetworkAnchorManager : NetworkBehaviour
     /// Move the anchor source
     /// </summary>
     [Server]
-    public bool MoveAnchorSource(NetworkAnchorPlayer player, SharedAnchorData achorData, Vector3 offset)
+    public bool MoveAnchorSource(NetworkAnchorPlayer player, string anchorId, Vector3 offset)
     {
         bool moved = false;
         lock (AnchorCheckoutLock)
         {
             if (AnchorSourceCheckedOutBy != null &&
                 player.netId == AnchorSourceCheckedOutBy.netId &&
-                achorData.AnchorId == SyncVar_AnchorSource.AnchorId &&
-                AnchorSource.IsValid)
+                anchorId == SyncVar_AnchorSource.AnchorId &&
+                SyncVar_AnchorSource.IsValid)
             {
-                Debug.LogFormat("[NetworkAnchorManager] Moved anchor source. (player.netId: {0}) (offset: {1}) {2} {3} {4}", player.netId, offset, achorData.ToString(), SyncVar_AnchorSource.ToString(), DebugInfo());
-                SyncVar_AnchorSource = SharedAnchorData.Create(SyncVar_AnchorSource, offset);
+                Debug.LogFormat("[NetworkAnchorManager] Server moved anchor source. (player.netId: {0}) (offset: {1}) (move anchorId: {2}) {3} {4}", player.netId, offset, anchorId, SyncVar_AnchorSource.ToString(), DebugInfo());
+                SyncVar_AnchorSource = SharedAnchorData.Move(SyncVar_AnchorSource, offset);
                 moved = true;
             }
             else
             {
-                Debug.LogFormat("[NetworkAnchorManager] Could not move anchor source. (player.netId: {0}) {1} {2} {3}", player.netId, achorData.ToString(), SyncVar_AnchorSource.ToString(), DebugInfo());
+                Debug.LogFormat("[NetworkAnchorManager] Server could not move anchor source. (player.netId: {0}) (move anchorId: {1}) {2} {3}", player.netId, anchorId, SyncVar_AnchorSource.ToString(), DebugInfo());
             }
         }
         return moved;
@@ -359,11 +372,11 @@ public class NetworkAnchorManager : NetworkBehaviour
                     SyncVar_AnchorSource = anchorData;
                 }
 
-                Debug.LogFormat("[NetworkAnchorManager] Checked in anchor source. (player.netId: {0}) {1} {2} {3}", player.netId, anchorData.ToString(), SyncVar_AnchorSource.ToString(), DebugInfo());
+                Debug.LogFormat("[NetworkAnchorManager] Server checked in anchor source. (player.netId: {0}) {1} {2} {3}", player.netId, anchorData.ToString(), SyncVar_AnchorSource.ToString(), DebugInfo());
             }
             else
             {
-                Debug.LogFormat("[NetworkAnchorManager] Could not check in anchor source. (player.netId: {0}) {1} {2} {3}", player.netId, anchorData.ToString(), SyncVar_AnchorSource.ToString(), DebugInfo());
+                Debug.LogFormat("[NetworkAnchorManager] Server could not check in anchor source. (player.netId: {0}) {1} {2} {3}", player.netId, anchorData.ToString(), SyncVar_AnchorSource.ToString(), DebugInfo());
             }
         }
         return checkedIn;
@@ -374,7 +387,7 @@ public class NetworkAnchorManager : NetworkBehaviour
     /// <summary>
     /// The results of sharing an anchor
     /// </summary>
-    public enum SharingAnchorResult
+    public enum ExportingAnchorResult
     {
         Unknown,
         Success,
@@ -400,7 +413,7 @@ public class NetworkAnchorManager : NetworkBehaviour
     /// <param name="success">
     /// True if sharing was successful. False otherwise
     /// </param>
-    public delegate void ExportingAnchorCompleteDelegate(String anchorId, GameObject gameObject, SharingAnchorResult result);
+    public delegate void ExportingAnchorCompleteDelegate(String anchorId, GameObject gameObject, ExportingAnchorResult result);
 
     /// <summary>
     /// Try exporting the anchor data stored in game object, and broadcast anchor data with other players.
@@ -416,40 +429,40 @@ public class NetworkAnchorManager : NetworkBehaviour
 
     public bool ExportAnchorAsync(int attempts, String anchorId, GameObject gameObject, ExportingAnchorCompleteDelegate completeDelegate)
     {
+        ExportingAnchorResult result = ExportingAnchorResult.Unknown;
         lock (ImportingAndExportingLock)
         {
-            SharingAnchorResult result = SharingAnchorResult.Unknown;
             WorldAnchor worldAnchor = gameObject.GetComponent<WorldAnchor>();
 
             if (HolographicSettings.IsDisplayOpaque)
             {
-                Debug.LogFormat("[NetworkAnchorManager] Ignoring share anchor request, as this device doesn't support anchoring. (anchor id: {0})", anchorId);
-                result = SharingAnchorResult.FailedDisplayIsOpaque;
+                Debug.LogFormat("[NetworkAnchorManager] Ignoring export anchor request, as this device doesn't support anchoring. (anchor id: {0})", anchorId);
+                result = ExportingAnchorResult.FailedDisplayIsOpaque;
             }
-            else if (AnchorSource.AnchorId == anchorId)
+            else if (SyncVar_AnchorSource.AnchorId == anchorId)
             {
-                Debug.LogFormat("[NetworkAnchorManager] Ignoring share anchor request, as anchor is already being shared. (anchor id: {0})", anchorId);
-                result = SharingAnchorResult.FailedAnchorIsAlreadyShared;
+                Debug.LogFormat("[NetworkAnchorManager] Ignoring export anchor request, as anchor is already being shared. (anchor id: {0})", anchorId);
+                result = ExportingAnchorResult.FailedAnchorIsAlreadyShared;
             }
             else if (ImportedAnchor != null && ImportedAnchor.AnchorId == anchorId)
             {
-                Debug.LogFormat("[NetworkAnchorManager] Ignoring share anchor request, as anchor was just received. (anchor id: {0})", anchorId);
-                result = SharingAnchorResult.FailedAnchorWasJustReceived;
+                Debug.LogFormat("[NetworkAnchorManager] Ignoring export anchor request, as anchor was just received. (anchor id: {0})", anchorId);
+                result = ExportingAnchorResult.FailedAnchorWasJustReceived;
             }
             else if (worldAnchor == null)
             {
-                Debug.LogErrorFormat("[NetworkAnchorManager] Unable to acquire anchor ownership. Game object is missing an anchor. (anchor id: {0})", anchorId);
-                result = SharingAnchorResult.FailedGameObjectMissingAnchor;
+                Debug.LogErrorFormat("[NetworkAnchorManager] Unable to export anchor. Game object is missing an anchor. (anchor id: {0})", anchorId);
+                result = ExportingAnchorResult.FailedGameObjectMissingAnchor;
             }
             else if (attempts > retryAttempts)
             {
-                Debug.LogErrorFormat("[NetworkAnchorManager] Failed to export, attempt to retry export too many times. (anchor id: {0})", anchorId);
-                result = SharingAnchorResult.FailedRetriedTooManyTimes;
+                Debug.LogErrorFormat("[NetworkAnchorManager] Failed to export, attempted to retry exporting too many times. (anchor id: {0})", anchorId);
+                result = ExportingAnchorResult.FailedRetriedTooManyTimes;
             }
 
-            if (result == SharingAnchorResult.Unknown)
+            if (result == ExportingAnchorResult.Unknown)
             {
-                Debug.LogFormat("[NetworkAnchorManager] Attempting to acquire anchor ownership and share anchor with other players. (new anchor id: {0}) {1} {2}", anchorId, AnchorSource.ToString(), DebugInfo());
+                Debug.LogFormat("[NetworkAnchorManager] Attempting to export an anchor, so it can be shared with other players. (new anchor id: {0}) {1} {2}", anchorId, SyncVar_AnchorSource.ToString(), DebugInfo());
 
                 try
                 {
@@ -467,12 +480,12 @@ public class NetworkAnchorManager : NetworkBehaviour
                 }
                 catch (Exception e)
                 {
-                    Debug.LogFormat("[NetworkAnchorManager] Unknown error occurred when trying to export anchor. (exception message: {0}) (new anchor id: {1}) {2} {3}", e.Message, anchorId, AnchorSource.ToString(), DebugInfo());
-                    result = SharingAnchorResult.FailedUnknown;
+                    Debug.LogFormat("[NetworkAnchorManager] Unknown error occurred when trying to export anchor. (exception message: {0}) (new anchor id: {1}) {2} {3}", e.Message, anchorId, SyncVar_AnchorSource.ToString(), DebugInfo());
+                    result = ExportingAnchorResult.FailedUnknown;
                 }
             }
 
-            if (result == SharingAnchorResult.Unknown)
+            if (result == ExportingAnchorResult.Unknown)
             {
                 // The last received anchor will no longer be relevant since we're taking ownership
                 ImportedAnchor = null;
@@ -483,13 +496,15 @@ public class NetworkAnchorManager : NetworkBehaviour
                 // save the anchor being exported
                 ExportingAnchorSource = SharedAnchorData.Create(anchorId);
             }
-            else if (completeDelegate != null)
-            {
-                completeDelegate(anchorId, gameObject, result);
-            }
-
-            return result == SharingAnchorResult.Unknown;
         }
+
+        // Notify callback of failure
+        if (result != ExportingAnchorResult.Unknown && completeDelegate != null)
+        {
+            completeDelegate(anchorId, gameObject, result);
+        }
+
+        return result == ExportingAnchorResult.Unknown;
     }
 
     /// <summary>
@@ -503,34 +518,34 @@ public class NetworkAnchorManager : NetworkBehaviour
         GameObject gameObject,
         ExportingAnchorCompleteDelegate completeDelegate)
     {
-        SharingAnchorResult result = SharingAnchorResult.Unknown;
+        ExportingAnchorResult result = ExportingAnchorResult.Unknown;
         lock (ImportingAndExportingLock)
         {
             if (ImportingAnchorSource.IsValid || ImportedAnchor != null)
             {
-                Debug.LogFormat("[NetworkAnchorManager] Exporting anchor completed, but now using remote anchor. (anchor id: {0}) (bytes: {1}) (export result: {2}) {3}", anchorId, data.Length, status.ToString(), DebugInfo());
-                result = SharingAnchorResult.FailedTimedOut;
+                Debug.LogFormat("[NetworkAnchorManager] Exporting anchor completed, but local client is now using a remote anchor. (anchor id: {0}) (bytes: {1}) (export result: {2}) {3}", anchorId, data.Length, status.ToString(), DebugInfo());
+                result = ExportingAnchorResult.FailedTimedOut;
             }
             else if (ExportingAnchorSource.AnchorId != anchorId)
             {
                 Debug.LogFormat("[NetworkAnchorManager] Exporting anchor completed, but exporting anchor id changed. (anchor id: {0}) (bytes: {1}) {2}", anchorId, data.Length, DebugInfo());
-                result = SharingAnchorResult.FailedInvalidAnchorId;
+                result = ExportingAnchorResult.FailedInvalidAnchorId;
             }
             else if (status == SerializationCompletionReason.Succeeded)
             {
                 Debug.LogFormat("[NetworkAnchorManager] Exporting anchor succeeded. (anchor id: {0}) (bytes: {1}) {2}", anchorId, data.Length, DebugInfo());
                 anchorTransmitter.SendData(data);
-                result = SharingAnchorResult.Success;
+                result = ExportingAnchorResult.Success;
                 ExportingAnchorSource = SharedAnchorData.Empty;
             }
             else
             {
-                Debug.LogErrorFormat("[NetworkAnchorManager] Exporting anchor failed, going to retrying. (anchor id: {0}) (status: {1}) (bytes: {2}) {3}", anchorId, status, data.Length, DebugInfo());
+                Debug.LogErrorFormat("[NetworkAnchorManager] Exporting anchor failed, going to retry. (anchor id: {0}) (status: {1}) (bytes: {2}) {3}", anchorId, status, data.Length, DebugInfo());
                 StartCoroutine(RetrySharingAnchor(attempts, anchorId, gameObject, completeDelegate));
             }
         }
 
-        if (result != SharingAnchorResult.Unknown && completeDelegate != null)
+        if (result != ExportingAnchorResult.Unknown && completeDelegate != null)
         {
             completeDelegate(anchorId, gameObject, result);
         }
@@ -551,19 +566,19 @@ public class NetworkAnchorManager : NetworkBehaviour
             {
                 retry = true;
             }
-            else if (completeDelegate != null)
-            {
-                Debug.LogFormat("[NetworkAnchorManager] Can't retry sharing anchor, now using remote anchor or exporting a different anchor. (anchor id: {0}) {1}", anchorId, DebugInfo());
-                completeDelegate(anchorId, gameObject, SharingAnchorResult.FailedTimedOut);
-            }
         }
 
         if (retry)
         {
             ExportAnchorAsync(attempts + 1, anchorId, gameObject, completeDelegate);
         }
+        else if (completeDelegate != null)
+        {
+            Debug.LogFormat("[NetworkAnchorManager] Can't retry sharing anchor, local client is now using remote anchor or is exporting a different anchor. (anchor id: {0}) {1}", anchorId, DebugInfo());
+            completeDelegate(anchorId, gameObject, ExportingAnchorResult.FailedTimedOut);
+        }
     }
-#endregion Exporting Anchor Methods
+    #endregion Exporting Anchor Methods
 
     #region Importing Anchor Methods
     /// <summary>
@@ -580,11 +595,7 @@ public class NetworkAnchorManager : NetworkBehaviour
     /// </summary>
     private void SyncVar_AnchorSourceChanged(SharedAnchorData anchorSource)
     {
-        lock (ImportingAndExportingLock)
-        {
-            AnchorSource = SharedAnchorData.Create(AnchorSource, anchorSource.Offset);
-        }
-
+        AnchorOffset = anchorSource.Offset;
         ImportAnchorData(anchorSource);
     }
 
@@ -603,30 +614,29 @@ public class NetworkAnchorManager : NetworkBehaviour
 
             if (!anchorSource.IsValid)
             {
-                Debug.LogFormat("[NetworkAnchorManager] Ignoring anchor source since it's invalid. {0} {1}", anchorSource.ToString(), DebugInfo());
+                Debug.LogFormat("[NetworkAnchorManager] Ignoring import anchor request, since the anchor is invalid. {0} {1}", anchorSource.ToString(), DebugInfo());
                 return false;
             }
 
             if (anchorSource.SourceIp == LocalAddress)
             {
-                Debug.LogFormat("[NetworkAnchorManager] Ignoring anchor source since it originated from this player. {0} {1}", anchorSource.ToString(), DebugInfo());
+                Debug.LogFormat("[NetworkAnchorManager] Ignoring import anchor request, since it originated from this player. {0} {1}", anchorSource.ToString(), DebugInfo());
                 return false;
             }
 
             if (ImportedAnchor != null && anchorSource.AnchorId == ImportedAnchor.AnchorId)
             {
-                Debug.LogFormat("[NetworkAnchorManager] Ignoring anchor source since it's already imported. {0} {1}", anchorSource.ToString(), DebugInfo());
+                Debug.LogFormat("[NetworkAnchorManager] IIgnoring import anchor request, since it's already imported. {0} {1}", anchorSource.ToString(), DebugInfo());
                 return false;
             }
 
             if (ImportingAnchorSource.IsValid && ImportingAnchorSource.AnchorId == anchorSource.AnchorId)
             {
-                Debug.LogFormat("[NetworkAnchorManager] Ignoring anchor source since it's already being imported. {0} {1}", anchorSource.ToString(), DebugInfo());
+                Debug.LogFormat("[NetworkAnchorManager] Ignoring import anchor request, since it's already being imported. {0} {1}", anchorSource.ToString(), DebugInfo());
                 return false;
             }
 
             Debug.LogFormat("[NetworkAnchorManager] Importing anchor. {0} {1}", anchorSource.ToString(), DebugInfo());
-
 
             // no longer exported an anchor
             ExportingAnchorSource = SharedAnchorData.Empty;
@@ -744,8 +754,8 @@ public class NetworkAnchorManager : NetworkBehaviour
                 return;
             }
 
-            // Done importing
-            AnchorSource = ImportingAnchorSource;
+            // Done importing apply offset
+            AnchorOffset = ImportingAnchorSource.Offset;
 
             // save the last recieve anchor data
             ImportedAnchor = newImportedAnchor;
