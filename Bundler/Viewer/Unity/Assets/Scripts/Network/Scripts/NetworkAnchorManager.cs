@@ -30,6 +30,14 @@ public class WorldAnchorTransferBatch
     public delegate void SerializationCompleteDelegate(SerializationCompletionReason completionReason);
     public delegate void DeserializationCompleteDelegate(SerializationCompletionReason completionReason, WorldAnchorTransferBatch deserializedTransferBatch);
 
+    public int anchorCount
+    {
+        get
+        {
+            return 0;
+        }
+    }
+
     public string[] GetAllIds()
     {
         return new string[0];

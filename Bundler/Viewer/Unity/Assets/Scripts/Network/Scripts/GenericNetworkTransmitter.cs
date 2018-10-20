@@ -396,7 +396,7 @@ public class GenericNetworkTransmitter
     {
     }
 
-    private bool StartAsClient(string serverIp)
+    private bool StartAsClient(string requestId, string serverIp)
     {
         return true;
     }

@@ -138,6 +138,7 @@ public class NetworkAnchor : MonoBehaviour
         yield return anchorPlayer.CheckOutAnchorAsync();
         worldToLocalMatrixAtCheckOutTime = target.transform.worldToLocalMatrix;
         Debug.LogFormat("[NetworkAnchor] Check-out anchor. (checked out: {0})", CheckedOutAnchor);
+        UpdateAnchorPositions();
     }
 
     /// <summary>
@@ -272,7 +273,7 @@ public class NetworkAnchor : MonoBehaviour
     /// <summary>
     /// Called when the local player has successfully exported and shared an anchor.
     /// </summary>
-    private void OnSharedRemoteAnchor(object sender, string anchorId)
+    private void OnSharedRemoteAnchor(NetworkAnchorPlayer sender, string anchorId)
     {
         Debug.LogFormat("[NetworkAnchor] Finished check-in and now sharing a new anchor. (anchorId: {0})", anchorId);
         lastKnownAnchorId = anchorId;

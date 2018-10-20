@@ -179,12 +179,13 @@ namespace Persistence
 
         public Guid PlaceAnchor(bool saveAchor)
         {
+            // create a new anchor id for saving and sharing
+            Guid anchorId = Guid.NewGuid();
+
             TargetGameObject = TargetGameObject == null ? gameObject : TargetGameObject;
 #if UNITY_WSA
             ClearAnchor(false);
 
-            // create a new anchor id for saving and sharing
-            Guid anchorId = Guid.NewGuid();
             var storageIdString = anchorId.ToString();
 
             // Notify other that an anchor is about to be placed

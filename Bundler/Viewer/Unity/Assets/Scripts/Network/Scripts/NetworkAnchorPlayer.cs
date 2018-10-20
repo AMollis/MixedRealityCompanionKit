@@ -38,7 +38,8 @@ public class NetworkAnchorPlayer : NetworkBehaviour
     /// <summary>
     /// An event raised when this player has exported an anchor. The event will return the exported anchor id
     /// </summary>
-    public event EventHandler<string> ExportedAnchor;
+    public delegate void OnExportedAnchor(NetworkAnchorPlayer sender, string exportedAnchorId);
+    public event OnExportedAnchor ExportedAnchor;
 
     /// <summary>
     /// Get the last received remote anchor
@@ -81,10 +82,17 @@ public class NetworkAnchorPlayer : NetworkBehaviour
     /// </summary>
     public bool CheckedOutAnchor
     {
-        get;
-        private set;
+        get
+        {
+            return checkedOutAnchorCount > 0;
+        }
     }
 
+    /// <summary>
+    /// The number of active check out requests. A client could check out more than once if an anchor is currently being exported.
+    /// </summary>
+    private int checkedOutAnchorCount;
+    private object checkedOutAnchorCountLock = new object();
 
     /// <summary>
     /// Prevent client from being destroyed on scene changes.
@@ -239,7 +247,14 @@ public class NetworkAnchorPlayer : NetworkBehaviour
         }
 
         Debug.LogFormat("[NetworkAnchorPlayer] Done making check-out request. (result: {0}) {1}", CheckedOutAnchor, DebugInfo());
-        CheckedOutAnchor = checkedOut.Value;
+
+        if (checkedOut.Value)
+        {
+            lock (checkedOutAnchorCountLock)
+            {
+                checkedOutAnchorCount++;
+            }
+        }
     }
 
     /// <summary>
@@ -304,7 +319,14 @@ public class NetworkAnchorPlayer : NetworkBehaviour
     private void CheckInAnchor(SharedAnchorData anchorData)
     {
         CmdCheckInAnchor(anchorData);
-        CheckedOutAnchor = false;
+
+        lock (checkedOutAnchorCountLock)
+        {
+            if (checkedOutAnchorCount > 0)
+            {
+                checkedOutAnchorCount--;
+            }
+        }
     }
 
     [Command]
