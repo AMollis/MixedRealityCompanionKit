@@ -339,7 +339,7 @@ public class NetworkAnchorManager : NetworkBehaviour
         bool checkedOut = false;
         lock (AnchorCheckoutLock)
         {
-            if (AnchorSourceCheckedOutBy == null || AnchorSourceCheckedOutBy.netId == player.netId)
+            if (AnchorSourceCheckedOutBy == null)
             {
                 Debug.LogFormat("[NetworkAnchorManager] Server checked out anchor source. (player.netId: {0})", player.netId);
                 checkedOut = true;
@@ -364,8 +364,7 @@ public class NetworkAnchorManager : NetworkBehaviour
         bool moved = false;
         lock (AnchorCheckoutLock)
         {
-            if (AnchorSourceCheckedOutBy != null &&
-                player.netId == AnchorSourceCheckedOutBy.netId)
+            if (AnchorSourceCheckedOutBy != null && player.netId == AnchorSourceCheckedOutBy.netId)
             {
                 Debug.LogFormat("[NetworkAnchorManager] Server moved anchor source. (player.netId: {0}) (anchorId: {1}) (positionDelta: {2}) (eulerAnglesDelta: {3}) {4}", player.netId, anchorId, positionDelta, eulerAnglesDelta, DebugInfo());
                 MoveAllAnchors(positionDelta, eulerAnglesDelta);
