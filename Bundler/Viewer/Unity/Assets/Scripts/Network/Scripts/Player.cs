@@ -43,7 +43,7 @@ public class Player : NetworkBehaviour
     public override void OnStartClient()
     {
         
-        var parentObject = GameObject.Find("CalibratedRoot") as GameObject;
+        var parentObject = GameObject.Find("CalibratedPlayerRoot") as GameObject;
         if (parentObject != null)
         {
             transform.SetParent(parentObject.transform, false);

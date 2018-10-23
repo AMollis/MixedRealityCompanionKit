@@ -15,8 +15,9 @@ using System.Threading.Tasks;
 
 public class RequestDataCompletedArgs
 {
-    public RequestDataCompletedArgs(bool successful, byte[] data = null)
+    public RequestDataCompletedArgs(string id, bool successful, byte[] data = null)
     {
+        RequestId = id;
         Successful = successful;
         Data = data;
     }
@@ -30,6 +31,11 @@ public class RequestDataCompletedArgs
     /// The received data.
     /// </summary>
     public byte[] Data { get; private set; }
+
+    /// <summary>
+    /// An id the caller associated with the request.
+    /// </summary>
+    public string RequestId { get; private set; }
 }
 
 public class GenericNetworkTransmitter
@@ -70,9 +76,9 @@ public class GenericNetworkTransmitter
     /// Requests data from the server and handles getting the data and firing
     /// the dataReadyEvent.
     /// </summary>
-    public void RequestData(string serverIp)
+    public void RequestData(string requestId, string serverIp)
     {
-        StartAsClient(serverIp);
+        StartAsClient(requestId, serverIp);
     }
 
     /// <summary>
@@ -159,7 +165,7 @@ public class GenericNetworkTransmitter
     /// </summary>
     public async void StartAsServer(byte[] data)
     {
-        Debug.Log("[GenericNetworkTransmitter] Starting as server.");
+        Debug.Log("[GenericNetworkTransmitter] Creating server.");
 
         StopClient();
 
@@ -177,21 +183,23 @@ public class GenericNetworkTransmitter
             {
                 newNetworkListener = new StreamSocketListener();
                 newNetworkListener.ConnectionReceived += ConnectionReceived;
-                await newNetworkListener.BindServiceNameAsync(sendConnectionPort.ToString());
+                await newNetworkListener.BindServiceNameAsync(sendConnectionPort.ToString(), SocketProtectionLevel.PlainSocket);
             }
         }
         catch
         {
-            Debug.LogError("[GenericNetworkTransmitter] Failed to start as server.");
+            newNetworkListener = null;
+            Debug.LogError("[GenericNetworkTransmitter] Failed to create server.");
         }
 
         lock (stateLock)
         {
-            if (networkListener == null && state == TransmitterState.Server)
+            if (networkListener == null && newNetworkListener != null && state == TransmitterState.Server)
             {
+                Debug.Log("[GenericNetworkTransmitter] Started server.");
                 networkListener = newNetworkListener;
             }
-            else
+            else if (newNetworkListener != null)
             {
                 newNetworkListener.ConnectionReceived -= ConnectionReceived;
                 newNetworkListener.Dispose();
@@ -237,7 +245,7 @@ public class GenericNetworkTransmitter
     /// <summary>
     /// Connects to the server and requests data.
     /// </summary>
-    private async void StartAsClient(string serverIp)
+    private async void StartAsClient(string requestId, string serverIp)
     {
         Debug.LogFormat("[GenericNetworkTransmitter] Attempting to connect to server (server ip: {0})", serverIp);
 
@@ -256,7 +264,7 @@ public class GenericNetworkTransmitter
             HostName networkHost = new HostName(serverIp);
             using (StreamSocket networkConnection = new StreamSocket())
             {
-                await networkConnection.ConnectAsync(networkHost, sendConnectionPort.ToString());
+                await networkConnection.ConnectAsync(networkHost, sendConnectionPort.ToString(), SocketProtectionLevel.PlainSocket);
                 result = await ReadInputStream(networkConnection);
             }
         }
@@ -275,20 +283,20 @@ public class GenericNetworkTransmitter
         }
 
         bool success = result != null && result.Length > 0;
-        if (!success && RetryAsClient(serverIp))
+        if (!success && RetryAsClient(requestId, serverIp))
         {
             Debug.LogErrorFormat("[GenericNetworkTransmitter] Failed to receive data, but retrying (server ip: {0})", serverIp);
         }
         else if (this.RequestDataCompleted != null)
         {
-            this.RequestDataCompleted(this, new RequestDataCompletedArgs(success, result));
+            this.RequestDataCompleted(this, new RequestDataCompletedArgs(requestId, success, result));
         }
     }
 
     /// <summary>
     /// Retry starting as a client, after a delay
     /// </summary>
-    private bool RetryAsClient(string serverIp)
+    private bool RetryAsClient(string requestId, string serverIp)
     {
         lock (stateLock)
         {
@@ -298,14 +306,14 @@ public class GenericNetworkTransmitter
             }
         }
 
-        RetryAsClientWorker(serverIp);
+        RetryAsClientWorker(requestId, serverIp);
         return true;
     }
 
     /// <summary>
     /// Retry starting as a client, after a delay. This does the actual work of waiting
     /// </summary>
-    private async void RetryAsClientWorker(string serverIp)
+    private async void RetryAsClientWorker(string requestId, string serverIp)
     {
         CancellationToken cancellationToken = networkReceiverRetryCancellation.Token;
 
@@ -321,7 +329,7 @@ public class GenericNetworkTransmitter
 
         if (!canceled)
         {
-            StartAsClient(serverIp);
+            StartAsClient(requestId, serverIp);
         }
     }
 
@@ -388,7 +396,7 @@ public class GenericNetworkTransmitter
     {
     }
 
-    private bool StartAsClient(string serverIp)
+    private bool StartAsClient(string requestId, string serverIp)
     {
         return true;
     }

@@ -32,6 +32,7 @@ public class MasterController : ImprovedSingletonBehavior<MasterController>
     public GameObject Finger;
 
     private bool isPlacingStage;
+    private bool isLoadingStagePlacement;
 
     private bool hasSource;
     private bool delayHiding;
@@ -104,6 +105,8 @@ public class MasterController : ImprovedSingletonBehavior<MasterController>
     {
         if (isPlacingStage)
         {
+            HideMenu();
+
             SpatialMappingManager.StopObserver();
             isPlacingStage = false;
             StageManager.SetPreviewMode(false);
@@ -127,7 +130,7 @@ public class MasterController : ImprovedSingletonBehavior<MasterController>
             if (!hasSource && !delayShowing || force)
             {
                 Finger.SetActive(false);
-                ShowMenu(MenuManager.MenuType.None);
+                HideMenu();
                 Debug.Log("DelayHideMenu");
             }
         }
@@ -163,12 +166,28 @@ public class MasterController : ImprovedSingletonBehavior<MasterController>
 
     public void StartStagePlacement()
     {
-        ShowMenu(MenuManager.MenuType.None);
+        if (isLoadingStagePlacement)
+        {
+            return;
+        }
+
+        HideMenu();
+
 #if UNITY_WSA
-        SpatialMappingManager.gameObject.SetActive(true);
-        SpatialMappingManager.StartObserver();
-        ZoneCalibrationManager.Zones[0].ClearAnchor(true);
-        StartCoroutine(DelayStartStagePlacement());
+        isLoadingStagePlacement = true;
+        StartCoroutine(ZoneCalibrationManager.Zones[0].ClearAnchorAsync(true, (bool cleared) =>
+        {
+            if (cleared && isLoadingStagePlacement)
+            {
+                SpatialMappingManager.gameObject.SetActive(true);
+                SpatialMappingManager.StartObserver();
+                StartCoroutine(DelayStartStagePlacement());
+            }
+            else
+            {
+                isLoadingStagePlacement = false;
+            }
+        }));
 #endif
     }
 
@@ -176,23 +195,32 @@ public class MasterController : ImprovedSingletonBehavior<MasterController>
     {
         yield return new WaitForSeconds(.5f);
 
-        isPlacingStage = true;
-        StageManager.SetPreviewMode(true);
+        if (isLoadingStagePlacement)
+        {
+            isPlacingStage = true;
+            isLoadingStagePlacement = false;
+            StageManager.SetPreviewMode(true);
+        }
     }
 
     public void SetDefaultStagePosition()
     {
-        var direction = new Vector3(Camera.main.transform.forward.x, 0, Camera.main.transform.forward.z);
-        direction.Normalize();
-        direction *= 1.00f;
-        direction.y = -.5f;
-        var newPosition = Camera.main.transform.position + direction;
-        SetStageOrigin(newPosition);
+        StartCoroutine(ZoneCalibrationManager.Zones[0].ClearAnchorAsync(true, (bool cleared) =>
+        {
+            if (cleared)
+            {
+                var direction = new Vector3(Camera.main.transform.forward.x, 0, Camera.main.transform.forward.z);
+                direction.Normalize();
+                direction *= 1.00f;
+                direction.y = -.5f;
+                var newPosition = Camera.main.transform.position + direction;
+                SetStageOrigin(newPosition);
+            }
+        }));
     }
 
-    public void SetStageOrigin(Vector3 position)
+    private void SetStageOrigin(Vector3 position)
     {
-        ZoneCalibrationManager.Zones[0].ClearAnchor(true);
         MoveStageOrigin(position);
         ZoneCalibrationManager.Zones[0].PlaceAnchor(true);
     }
@@ -203,16 +231,16 @@ public class MasterController : ImprovedSingletonBehavior<MasterController>
         {
             float smoothTime = 0.1F;
             Vector3 velocity = Vector3.zero;
-            ZoneCalibrationManager.Zones[0].TargetTransform.position = Vector3.SmoothDamp(ZoneCalibrationManager.Zones[0].TargetTransform.position, position, ref velocity, smoothTime);
+            ZoneCalibrationManager.Zones[0].PreviewTransform.position = Vector3.SmoothDamp(ZoneCalibrationManager.Zones[0].PreviewTransform.position, position, ref velocity, smoothTime);
             float velocityF = 0.0f;
-            var newRotY = Mathf.SmoothDampAngle(ZoneCalibrationManager.Zones[0].TargetTransform.rotation.eulerAngles.y, Camera.main.transform.rotation.eulerAngles.y, ref velocityF, smoothTime);
-            ZoneCalibrationManager.Zones[0].TargetTransform.rotation = Quaternion.Euler(0, newRotY, 0);
+            var newRotY = Mathf.SmoothDampAngle(ZoneCalibrationManager.Zones[0].PreviewTransform.rotation.eulerAngles.y, Camera.main.transform.rotation.eulerAngles.y, ref velocityF, smoothTime);
+            ZoneCalibrationManager.Zones[0].PreviewTransform.rotation = Quaternion.Euler(0, newRotY, 0);
         }
         else
         {
-            ZoneCalibrationManager.Zones[0].TargetTransform.position = position;
+            ZoneCalibrationManager.Zones[0].PreviewTransform.position = position;
             var newRot = Quaternion.Euler(0, Camera.main.transform.rotation.eulerAngles.y, 0);
-            ZoneCalibrationManager.Zones[0].TargetTransform.rotation = newRot;
+            ZoneCalibrationManager.Zones[0].PreviewTransform.rotation = newRot;
         }
     }
 

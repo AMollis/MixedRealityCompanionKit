@@ -13,6 +13,66 @@ using UnityEngine.XR.WSA.Sharing;
 
 namespace Persistence
 {
+    public enum AnchorPersistenceEventType
+    {
+        /// <summary>
+        /// An error state
+        /// </summary>
+        Unknown,
+
+        /// <summary>
+        /// Atttempting to apply a shared anchor
+        /// </summary>
+        ApplyingShared,
+
+        /// <summary>
+        /// Successfully applied a shared anchor
+        /// </summary>
+        AppliedShared,
+
+        /// <summary>
+        /// An anchor was loaded from cached
+        /// </summary>
+        Loaded,
+
+        /// <summary>
+        /// An anchor was saved to the cache
+        /// </summary>
+        Saved,
+
+        /// <summary>
+        /// An anchor is about to be placed on object
+        /// </summary>
+        Placing,
+
+        /// <summary>
+        /// An anchor is about to be placed on object
+        /// </summary>
+        Placed
+    }
+
+    /// <summary>
+    /// Holds data on the presistence event
+    /// </summary>
+    public class AnchorPersistenceEventArgs
+    {
+        /// <summary>
+        /// The type of the persistence event
+        /// </summary>
+        public AnchorPersistenceEventType Type { get; set; }
+
+        /// <summary>
+        /// The anchor id
+        /// </summary>
+        public string AnchorId { get; set; }
+
+
+        /// <summary>
+        /// The game object that owns this anchor
+        /// </summary>
+        public GameObject AnchorOwner { get; set; }
+    }
+
     /// <summary>
     /// Loads or saves an anchor with this gameobject name.
     /// </summary>
@@ -21,8 +81,8 @@ namespace Persistence
         /// <summary>
         /// Invoked when this object finished an action, like save or load.
         /// </summary>
-        public delegate void OnPersistenceEvent(AnchorPersistence source, PersistenceEventArgs args);
-        public event OnPersistenceEvent PersistenceEvent;
+        public delegate void OnAnchorPersistenceEvent(AnchorPersistence source, AnchorPersistenceEventArgs args);
+        public event OnAnchorPersistenceEvent AnchorPersistenceEvent;
 
         /// <summary>
         /// Invoked when the persitence behavior loads an anchor from cache
@@ -117,23 +177,33 @@ namespace Persistence
             return true;
         }
 
-        public bool PlaceAnchor(bool saveAchor)
+        public Guid PlaceAnchor(bool saveAchor)
         {
+            // create a new anchor id for saving and sharing
+            Guid anchorId = Guid.NewGuid();
+
             TargetGameObject = TargetGameObject == null ? gameObject : TargetGameObject;
 #if UNITY_WSA
+            ClearAnchor(false);
+
+            var storageIdString = anchorId.ToString();
+
+            // Notify other that an anchor is about to be placed
+            RaiseAnchorPersistenceEvent(AnchorPersistenceEventType.Placing, TargetGameObject, storageIdString);
+
+            // Apply anchor
+            TargetGameObject.AddComponent<WorldAnchor>();
+            _isAnchored = true;
+
+            // Notify others that an anchor was placed
+            RaiseAnchorPersistenceEvent(AnchorPersistenceEventType.Placed, TargetGameObject, storageIdString);
+
             if (saveAchor)
             {
-                _isAnchored = saveLoad.SaveLocation(TargetGameObject, worldAnchorStore);
-
-            }
-            else
-            {
-                ClearAnchor(false);
-                TargetGameObject.AddComponent<WorldAnchor>();
-                _isAnchored = true;
+                saveLoad.SaveLocation(anchorId, TargetGameObject, worldAnchorStore);
             }
 #endif
-            return _isAnchored;
+            return anchorId;
         }
 
         /// <summary>
@@ -174,9 +244,47 @@ namespace Persistence
         /// </summary>
         private void SaveLoad_PersistenceEvent(PersistenceSaveLoad source, PersistenceEventArgs args)
         {
-            if (PersistenceEvent != null)
+            AnchorPersistenceEventType type = AnchorPersistenceEventType.Unknown;
+
+            switch (args.Type)
             {
-                PersistenceEvent(this, args);
+                case PersistenceEventType.AppliedShared:
+                    type = AnchorPersistenceEventType.AppliedShared;
+                    break;
+
+                case PersistenceEventType.ApplyingShared:
+                    type = AnchorPersistenceEventType.ApplyingShared;
+                    break;
+
+                case PersistenceEventType.Loaded:
+                    type = AnchorPersistenceEventType.Loaded;
+                    break;
+
+                case PersistenceEventType.Saved:
+                    type = AnchorPersistenceEventType.Saved;
+                    break;
+            }
+
+            if (type != AnchorPersistenceEventType.Unknown)
+            {
+                RaiseAnchorPersistenceEvent(type, args.AnchorOwner, args.AnchorId);
+            }
+        }
+
+        private void RaiseAnchorPersistenceEvent(AnchorPersistenceEventType type, GameObject owner, string anchorId)
+        {
+            Debug.LogFormat("[AnchorPersistence] RaiseAnchorPersistenceEvent (type: {0}) (anchor id: {1})", type, anchorId);
+            if (AnchorPersistenceEvent != null)
+            {
+                AnchorPersistenceEventArgs args = new AnchorPersistenceEventArgs();
+                args.AnchorId = anchorId;
+                args.AnchorOwner = owner;
+                args.Type = type;
+
+                if (AnchorPersistenceEvent != null)
+                {
+                    AnchorPersistenceEvent(this, args);
+                }
             }
         }
     }

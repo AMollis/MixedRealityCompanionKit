@@ -3,9 +3,12 @@
 
 using UnityEngine;
 using System;
+using System.Collections;
+using UnityEngine.XR.WSA.Sharing;
 
 namespace Persistence
 {
+    [RequireComponent(typeof(NetworkAnchor))]
     [RequireComponent(typeof(AnchorPersistence))]
     public class CalibrationZone : MonoBehaviour
     {
@@ -15,36 +18,45 @@ namespace Persistence
         [Tooltip("Root transform to align. Leave null to use current transform.")]
         public Transform TargetTransform = null;
 
+        [Tooltip("Root transform to align as a preview. Once previewing is complete, position will be migrated to the target transform. Leave null to use the target transform.")]
+        public Transform PreviewTransform = null;
+
         [HideInInspector]
         public bool IsCalibrated { get { return persistence.IsAnchored; } }
         [HideInInspector]
         public bool IsCalibrating = false;
 
-        private Vector3 origPosition;
-        private Quaternion origRotation;
-        private Vector3 origScale;
-
         private AnchorPersistence persistence;
+        private NetworkAnchor networkAnchor;
         
         void Awake()
         {
             TargetTransform = TargetTransform == null ? gameObject.transform : TargetTransform;
-            origPosition = TargetTransform.localPosition;
-            origRotation = TargetTransform.localRotation;
-            origScale = TargetTransform.localScale;
+            PreviewTransform = PreviewTransform == null ? TargetTransform : PreviewTransform;
+            ResetPreviewTransform();
         }
 
         void Start()
         {
+            networkAnchor = GetComponent<NetworkAnchor>();
+            networkAnchor.ReceivedRemoteAnchorTransferBatch += NetworkAnchor_ReceivedRemoteAnchorTransferBatch;
+
             persistence = GetComponent<AnchorPersistence>();
             persistence.TargetGameObject = TargetTransform.gameObject;
-            persistence.AnchorLoaded += Persistence_AnchorLoaded;
-
-            Persistence_AnchorLoaded();
+            persistence.AnchorPersistenceEvent += Persistence_AnchorPersistenceEvent;
         }
 
-        private void Persistence_AnchorLoaded()
+        private void NetworkAnchor_ReceivedRemoteAnchorTransferBatch(NetworkAnchor sender, WorldAnchorTransferBatch batch)
         {
+            persistence.ApplyAnchor(batch, true);
+        }
+
+        private void Persistence_AnchorPersistenceEvent(AnchorPersistence source, AnchorPersistenceEventArgs args)
+        {
+            if (args.Type == AnchorPersistenceEventType.Loaded)
+            {
+                StartCoroutine(networkAnchor.SetDefaultAnchor(args.AnchorId, args.AnchorOwner));
+            }
         }
 
         public void AlignZone()
@@ -79,6 +91,10 @@ namespace Persistence
             {
                 PlaceAnchor(saveAnchor);
             }
+            else
+            {
+                CommitPreviewTransform();
+            }
 
             IsCalibrating = false;
 
@@ -90,22 +106,48 @@ namespace Persistence
 
         public void PlaceAnchor(bool saveAnchor)
         {
-            persistence.PlaceAnchor(saveAnchor);
+            CommitPreviewTransform();
+            string anchorId = persistence.PlaceAnchor(saveAnchor).ToString();
+            networkAnchor.CheckInAnchor(anchorId, TargetTransform.gameObject);
         }
-        
-        public bool ClearAnchor(bool removeSavedLocation)
+
+        private void CommitPreviewTransform()
         {
-            var ret =  persistence.ClearAnchor(removeSavedLocation);
-            Persistence_AnchorLoaded();
+            if (PreviewTransform != TargetTransform)
+            {
+                TargetTransform.position = PreviewTransform.position;
+                TargetTransform.rotation = PreviewTransform.rotation;
+                TargetTransform.localScale = PreviewTransform.localScale;
+                ResetPreviewTransform();
+            }
+        }
+
+        public delegate void ClearAnchorResult(bool success);
+
+        public IEnumerator ClearAnchorAsync(bool removeSavedLocation, ClearAnchorResult callback)
+        {
+            yield return networkAnchor.CheckOutAnchorAsync(persistence.TargetGameObject);
+            if (networkAnchor.CheckedOutAnchor)
+            {
+                ClearAnchor(removeSavedLocation);
+            }
+            callback(networkAnchor.CheckedOutAnchor);
+        }
+
+        private bool ClearAnchor(bool removeSavedLocation)
+        {
+            var ret = persistence.ClearAnchor(removeSavedLocation);
             return ret;
         }
 
-        public void ResetTransform(bool removeSavedLocation = false)
+        private void ResetPreviewTransform()
         {
-            ClearAnchor(removeSavedLocation);
-            TargetTransform.localPosition = origPosition;
-            TargetTransform.localRotation = origRotation;
-            TargetTransform.localScale = origScale;
+            if (TargetTransform != PreviewTransform)
+            {
+                PreviewTransform.localPosition = Vector3.zero;
+                PreviewTransform.localRotation = Quaternion.identity;
+                PreviewTransform.localScale = Vector3.one;
+            }
         }
     }
 }
